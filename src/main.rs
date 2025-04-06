@@ -15,6 +15,10 @@ use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, Cont
 mod transform;
 mod ansi; // Declare the ansi module
 
+// Imports for UTF-8 decoding
+use encoding_rs::UTF_8;
+use encoding_rs_io::DecodeReaderBytesBuilder;
+
 // Helper struct to restore terminal settings on drop
 struct TermRestore<'a> {
     original_termios: Termios,
@@ -106,31 +110,47 @@ fn main() -> io::Result<()> {
     let thread_cwd = cwd.clone();
 
     let output_thread = thread::spawn(move || {
-        let mut pty_out = pty_reader_file;
-        let mut buffer = [0; 2048];
+        // Wrap the PTY reader with a UTF-8 decoder
+        let mut decoder = DecodeReaderBytesBuilder::new()
+            .encoding(Some(UTF_8))
+            .build(pty_reader_file);
+
+        // Use a byte buffer for reading decoded bytes
+        let mut byte_buffer = [0; 2048];
 
         loop {
-            match pty_out.read(&mut buffer) {
+            // Read decoded bytes into the byte buffer
+            match decoder.read(&mut byte_buffer) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
-                    let output_bytes = &buffer[..n];
-                    let lossy_str = String::from_utf8_lossy(output_bytes);
+                    // Bytes read are already decoded to UTF-8 (or replacements)
+                    let decoded_bytes = &byte_buffer[..n];
 
-                    // Correct call signature for transform::transform
-                    let transformed_str = transform::transform(&lossy_str, &thread_cwd);
+                    // Convert the valid UTF-8 bytes to a string slice
+                    match std::str::from_utf8(decoded_bytes) {
+                        Ok(decoded_str) => {
+                            // Pass the correctly decoded string chunk to transform
+                            let transformed_str = transform::transform(decoded_str, &thread_cwd);
 
-                    let mut stdout = io::stdout().lock();
-                    if let Err(e) = stdout.write_all(transformed_str.as_bytes()) {
-                        eprintln!("Error writing to stdout: {}", e);
-                        break;
+                            let mut stdout = io::stdout().lock();
+                            if let Err(e) = stdout.write_all(transformed_str.as_bytes()) {
+                                eprintln!("Error writing to stdout: {}", e);
+                                break;
+                            }
+                            let _ = stdout.flush();
+                        }
+                        Err(e) => {
+                             // This should theoretically not happen if encoding_rs works correctly
+                             eprintln!("UTF-8 conversion error after decode: {}. Skipping chunk.", e);
+                        }
                     }
-                    let _ = stdout.flush();
                 }
                 Err(e) => {
                     if e.kind() == io::ErrorKind::Interrupted {
                         continue;
                     }
-                    eprintln!("Error reading from PTY: {}", e);
+                    // Decoder can return errors
+                    eprintln!("Error reading/decoding from PTY: {}", e);
                     break;
                 }
             }
