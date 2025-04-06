@@ -2,10 +2,8 @@ use std::path::{Path, PathBuf};
 use std::env;
 use regex::Regex;
 
-// Import the ANSI iterator types from the sibling module
 use crate::ansi::iterator::{AnsiElementIterator, Element};
 
-// --- Rule Definition ---
 pub struct Rule {
     pub name: String,
     pub regex: Regex,
@@ -20,12 +18,10 @@ fn get_rules() -> Vec<Rule> {
     ]
 }
 
-// --- Transformation Logic using ANSI Iterator ---
 pub fn transform(chunk: &str, cwd: &Path) -> String {
     let rules = get_rules();
-    let mut output = String::with_capacity(chunk.len() * 2); // Pre-allocate
+    let mut output = String::with_capacity(chunk.len() * 2);
 
-    // Assume only FilePathLine rule for now
     let rule = rules.iter().find(|r| r.name == "FilePathLine").unwrap(); // TODO: Handle multiple rules more generally
 
     for element in AnsiElementIterator::new(chunk) {
@@ -43,12 +39,10 @@ pub fn transform(chunk: &str, cwd: &Path) -> String {
                         let rel_path = rel_path_match.as_str();
 
                         if let Ok(line_num) = line_num_match.as_str().parse::<u32>() {
-                            // --- Path validity check ---
                             let full_path = cwd.join(rel_path);
                              if !(full_path.exists() || rel_path.contains('/') || rel_path.starts_with('.')) {
                                 continue; // Skip if it doesn't look like a path
                             }
-                            // --- End path check ---
 
                             // Append text segment before the match
                             output.push_str(&text_segment[last_match_end..match_start]);
@@ -79,8 +73,6 @@ pub fn transform(chunk: &str, cwd: &Path) -> String {
     output
 }
 
-// --- Helper Functions (Keep private) ---
-
 fn format_vscode_hyperlink(cwd: &Path, rel_path: &str, line: u32) -> String {
     let path = cwd.join(rel_path);
     let absolute_path = if path.is_absolute() {
@@ -91,7 +83,6 @@ fn format_vscode_hyperlink(cwd: &Path, rel_path: &str, line: u32) -> String {
     format!("cursor://file/{}:{}", absolute_path.to_string_lossy(), line)
 }
 
-// Restore the helper function
 fn format_osc8_hyperlink(url: &str, text: &str) -> String {
     format!(
         "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
@@ -99,7 +90,3 @@ fn format_osc8_hyperlink(url: &str, text: &str) -> String {
         text
     )
 }
-
-// This function is no longer called directly from transform, as the OSC codes
-// are constructed inline. It can be removed or kept for potential future use.
-// fn format_osc8_hyperlink(url: &str, text: &str) -> String { ... } 

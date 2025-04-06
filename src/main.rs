@@ -8,18 +8,14 @@ use std::fs::File;
 use std::thread;
 use terminal_size::{terminal_size, Height, Width};
 
-// Import termios functions and flags from nix
 use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, ControlFlags};
 
-// Declare the transform module
 mod transform;
-mod ansi; // Declare the ansi module
+mod ansi;
 
-// Imports for UTF-8 decoding
 use encoding_rs::UTF_8;
 use encoding_rs_io::DecodeReaderBytesBuilder;
 
-// Helper struct to restore terminal settings on drop
 struct TermRestore<'a> {
     original_termios: Termios,
     fd: BorrowedFd<'a>,
@@ -35,13 +31,9 @@ impl<'a> Drop for TermRestore<'a> {
 }
 
 fn main() -> io::Result<()> {
-    // Get CWD once
     let cwd = env::current_dir()?;
-
-    // Get stdin
     let stdin = io::stdin();
 
-    // Check if stdin is a TTY using the IsTerminal trait
     if !stdin.is_terminal() {
         eprintln!("Error: Standard input is not a TTY.");
         return Err(io::Error::new(io::ErrorKind::Other, "Stdin not a TTY"));
@@ -69,38 +61,27 @@ fn main() -> io::Result<()> {
     termios::cfmakeraw(&mut raw_termios);
 
     // Apply raw mode settings using BorrowedFd
-    println!("Applying raw mode terminal settings...");
     termios::tcsetattr(stdin_fd, termios::SetArg::TCSANOW, &raw_termios)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to set raw terminal attributes: {}", e)))?;
 
-    // Get initial terminal size
     let term_size = terminal_size();
 
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    println!(
-        "Starting xolmis: Spawning '{}' in a PTY...",
-        shell
-    );
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
     let cmd = Command::new(&shell);
     let (pty, pts): (Pty, Pts) = pty_process::blocking::open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open PTY: {}", e)))?;
 
-    // --- Set initial PTY size ---
     if let Some((Width(cols), Height(rows))) = term_size {
-        println!("Resizing PTY to {}x{}", cols, rows);
         let pty_size = Size::new(rows, cols);
         pty.resize(pty_size)
            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to resize PTY: {}", e)))?;
     } else {
         eprintln!("Warning: Could not get terminal size. PTY might have incorrect dimensions.");
     }
-    // --- End PTY size setup ---
 
     let mut child: Child = cmd.spawn(pts)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to spawn process: {}", e)))?;
-
-    println!("PTY spawned successfully.");
 
     let pty_fd = pty.as_raw_fd();
 
@@ -149,7 +130,6 @@ fn main() -> io::Result<()> {
                     if e.kind() == io::ErrorKind::Interrupted {
                         continue;
                     }
-                    // Decoder can return errors
                     eprintln!("Error reading/decoding from PTY: {}", e);
                     break;
                 }
@@ -180,7 +160,7 @@ fn main() -> io::Result<()> {
                     }
                     eprintln!("Error reading from stdin: {}", e);
                     break;
-                }
+                 }
             }
         }
     });
