@@ -81,8 +81,7 @@ fn main() -> io::Result<()> {
     );
 
     let cmd = Command::new(&shell);
-    // Make pty mutable so we can resize it
-    let (mut pty, pts): (Pty, Pts) = pty_process::blocking::open()
+    let (pty, pts): (Pty, Pts) = pty_process::blocking::open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open PTY: {}", e)))?;
 
     // --- Set initial PTY size ---
