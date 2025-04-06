@@ -13,6 +13,7 @@ use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, Cont
 
 // Declare the transform module
 mod transform;
+mod ansi; // Declare the ansi module
 
 // Helper struct to restore terminal settings on drop
 struct TermRestore<'a> {

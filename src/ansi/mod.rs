@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
+pub mod iterator;
+
 mod console_tests;
-mod iterator;
 
 use std::borrow::Cow;
 
