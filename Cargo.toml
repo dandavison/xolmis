@@ -9,3 +9,4 @@ edition = "2021"
 # ... other dependencies if you have them ...
 pty-process = "0.5"
 regex = "1"
+nix = { version = "0.29", features = ["term"] }

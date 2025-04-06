@@ -1,19 +1,72 @@
 use pty_process::blocking::{Command, Pty, Pts};
 use std::env;
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::io::{self, Read, Write, IsTerminal};
+use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::process::{ExitStatus, Child};
 use std::fs::File;
 use std::thread;
 
+// Import termios functions and flags from nix
+use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, ControlFlags};
+
+// Helper struct to restore terminal settings on drop
+struct TermRestore<'a> {
+    original_termios: Termios,
+    fd: BorrowedFd<'a>,
+}
+
+impl<'a> Drop for TermRestore<'a> {
+    fn drop(&mut self) {
+        println!("Restoring terminal settings...");
+        if let Err(e) = termios::tcsetattr(self.fd, termios::SetArg::TCSANOW, &self.original_termios) {
+            eprintln!("Failed to restore terminal settings: {}", e);
+        }
+    }
+}
+
 fn main() -> io::Result<()> {
+    // Get stdin
+    let stdin = io::stdin();
+
+    // Check if stdin is a TTY using the IsTerminal trait
+    if !stdin.is_terminal() {
+        eprintln!("Error: Standard input is not a TTY.");
+        return Err(io::Error::new(io::ErrorKind::Other, "Stdin not a TTY"));
+    }
+
+    // Get BorrowedFd for stdin
+    let stdin_fd = stdin.as_fd();
+
+    // Get original terminal attributes using BorrowedFd
+    let original_termios = termios::tcgetattr(stdin_fd)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to get terminal attributes: {}", e)))?;
+
+    // Create a scope guard to restore terminal settings on exit
+    let _term_restore = TermRestore { original_termios: original_termios.clone(), fd: stdin_fd };
+
+    // Create raw mode attributes
+    let mut raw_termios = original_termios.clone();
+    // Disable echo, canonical mode (line buffering), signal chars (Ctrl+C), flow control
+    raw_termios.input_flags &= !(InputFlags::IGNBRK | InputFlags::BRKINT | InputFlags::PARMRK | InputFlags::ISTRIP | InputFlags::INLCR | InputFlags::IGNCR | InputFlags::ICRNL | InputFlags::IXON);
+    raw_termios.output_flags &= !(OutputFlags::OPOST);
+    raw_termios.local_flags &= !(LocalFlags::ECHO | LocalFlags::ECHONL | LocalFlags::ICANON | LocalFlags::ISIG | LocalFlags::IEXTEN);
+    raw_termios.control_flags &= !(ControlFlags::CSIZE | ControlFlags::PARENB);
+    raw_termios.control_flags |= ControlFlags::CS8;
+    // Set VMIN = 1, VTIME = 0 (read returns after 1 byte is available, no timeout)
+    termios::cfmakeraw(&mut raw_termios);
+
+    // Apply raw mode settings using BorrowedFd
+    println!("Applying raw mode terminal settings...");
+    termios::tcsetattr(stdin_fd, termios::SetArg::TCSANOW, &raw_termios)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to set raw terminal attributes: {}", e)))?;
+
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     println!(
         "Starting xolmis: Spawning '{}' in a PTY...",
         shell
     );
 
-    let mut cmd = Command::new(&shell);
+    let cmd = Command::new(&shell);
     let (pty, pts): (Pty, Pts) = pty_process::blocking::open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open PTY: {}", e)))?;
 
@@ -100,5 +153,6 @@ fn main() -> io::Result<()> {
     input_thread.join().expect("Input thread panicked");
 
     println!("xolmis finished.");
+    // Explicit exit is fine, _term_restore handles cleanup
     std::process::exit(status.code().unwrap_or(1));
 }
