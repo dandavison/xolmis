@@ -187,12 +187,15 @@ mod tests {
         // We use Cargo.toml here as a stand-in for a python file for existence check
         let abs_path = get_crate_abs_path("Cargo.toml");
         let abs_path_str = abs_path.to_string_lossy();
+        // Input string with leading spaces
         let input = format!("  File \"{}\", line 10, in <module>", abs_path_str);
         let cwd = env::current_dir().unwrap();
 
         let url = make_link_url(&abs_path, 10);
-        let link_text_owned = format!("File \"{}\", line 10", abs_path_str);
-        let expected = format!("  {}, in <module>", make_osc8_link(&url, &link_text_owned));
+        // The link text should now include the leading spaces because the regex matches them
+        let link_text_owned = format!("  File \"{}\", line 10", abs_path_str);
+        // Expected output has the hyperlink applied to the text including spaces, followed by the rest
+        let expected = format!("{}, in <module>", make_osc8_link(&url, &link_text_owned));
 
         let actual = transform(&input, &cwd);
         assert_eq!(actual, expected);

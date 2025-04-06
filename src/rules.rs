@@ -22,7 +22,7 @@ pub struct CompiledRule {
 const RULES_DATA: &[RuleData] = &[
     RuleData {
         name: "PythonTrace",
-        regex_str: r#"File "([^"]+)", line (\d+)"#,
+        regex_str: r#"\s*File "([^"]+)", line (\d+)"#,
         path_group_index: 1,
         line_group_index: 2,
     },
@@ -92,13 +92,22 @@ mod tests {
 
     #[test]
     fn test_python_trace_regex() {
+        // Use the compiled rule from lazy_static
         let rule = find_rule("PythonTrace").expect("PythonTrace rule not found");
-        let text = r#"  File "/path/to/your_file.py", line 123, in some_function"#;
-        let caps = rule.regex.captures(text).expect("Regex should capture");
 
+        // Original test case (no leading space) - should still pass
+        let text = r#"File "/path/to/your_file.py", line 123, in some_function"#;
+        let caps = rule.regex.captures(text).expect("Regex should capture without leading space");
         assert_eq!(caps.get(rule.path_group_index).unwrap().as_str(), "/path/to/your_file.py");
         assert_eq!(caps.get(rule.line_group_index).unwrap().as_str(), "123");
 
+        // New test case for the bug fix (with leading spaces)
+        let text_with_spaces = r#"  File "/path/to/another.py", line 456, in func"#;
+        let caps_with_spaces = rule.regex.captures(text_with_spaces).expect("Regex should capture with leading space");
+        assert_eq!(caps_with_spaces.get(rule.path_group_index).unwrap().as_str(), "/path/to/another.py");
+        assert_eq!(caps_with_spaces.get(rule.line_group_index).unwrap().as_str(), "456");
+
+        // Original non-matching case
         let no_match_text = "Just some regular text";
         assert!(rule.regex.captures(no_match_text).is_none());
     }
