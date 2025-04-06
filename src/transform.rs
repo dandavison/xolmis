@@ -53,13 +53,10 @@ pub fn transform(chunk: &str, cwd: &Path) -> String {
                             // Append text segment before the match
                             output.push_str(&text_segment[last_match_end..match_start]);
 
-                            // Append hyperlink
+                            // Use the helper function to create the hyperlink
                             let link = format_vscode_hyperlink(cwd, rel_path, line_num);
-                            let osc_start = format!("\x1b]8;;{}\x1b\\", link);
-                            let osc_end = "\x1b]8;;\x1b\\";
-                            output.push_str(&osc_start);
-                            output.push_str(matched_text);
-                            output.push_str(osc_end);
+                            let hyperlinked_text = format_osc8_hyperlink(&link, matched_text);
+                            output.push_str(&hyperlinked_text);
 
                             // Update position within the segment
                             last_match_end = match_end;
@@ -92,6 +89,15 @@ fn format_vscode_hyperlink(cwd: &Path, rel_path: &str, line: u32) -> String {
         env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
     };
     format!("cursor://file/{}:{}", absolute_path.to_string_lossy(), line)
+}
+
+// Restore the helper function
+fn format_osc8_hyperlink(url: &str, text: &str) -> String {
+    format!(
+        "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
+        url,
+        text
+    )
 }
 
 // This function is no longer called directly from transform, as the OSC codes
