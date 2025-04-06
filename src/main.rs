@@ -4,7 +4,7 @@ use std::io::{self, Read, Write, IsTerminal};
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Child};
-use std::fs::{File, OpenOptions};
+use std::fs::{File};
 use std::thread;
 
 // Import termios functions and flags from nix
@@ -138,7 +138,7 @@ fn main() -> io::Result<()> {
                 Ok(0) => break, // EOF
                 Ok(n) => {
                     let output_bytes = &buffer[..n];
-                    let mut lossy_str = String::from_utf8_lossy(output_bytes);
+                    let lossy_str = String::from_utf8_lossy(output_bytes);
 
                     // Apply transformation using the helper function
                     let transformed_str = transform(&lossy_str, &thread_cwd, &re);
