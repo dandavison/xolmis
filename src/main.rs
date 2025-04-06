@@ -156,7 +156,7 @@ fn main() -> io::Result<()> {
     // - `pty`: The master end. xolmis reads shell output from and writes user input to this.
     // - `pts`: The slave end. This is passed to the child process (the shell) to use
     //          as its controlling terminal (its stdin, stdout, stderr).
-    let (mut pty, pts): (Pty, Pts) = pty_process::blocking::open() // Note: pty needs to be mutable for resize
+    let (pty, pts): (Pty, Pts) = pty_process::blocking::open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open PTY: {}", e)))?;
 
     // --- Set initial PTY size ---
@@ -166,7 +166,8 @@ fn main() -> io::Result<()> {
     if let Some((Width(cols), Height(rows))) = term_size {
         // println!("Resizing PTY to {}x{}", cols, rows); // Can be noisy
         let pty_size = Size::new(rows, cols);
-        // The `resize` method sends the appropriate ioctl (TIOCSWINSZ) to the PTY master.
+        // The `resize` method borrows `pty` mutably here, which is allowed even if
+        // the `pty` binding isn't `mut`.
         pty.resize(pty_size)
            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to resize PTY: {}", e)))?;
     } else {
