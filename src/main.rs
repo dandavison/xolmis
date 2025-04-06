@@ -90,7 +90,7 @@ fn main() -> io::Result<()> {
                 Ok(n) => {
                     let output_bytes = &buffer[..n];
                     let mut output_str = String::from_utf8_lossy(output_bytes).to_string();
-                    output_str = output_str.replace("hello", "hellox");
+                    // output_str = output_str.replace("hello", "hellox"); // <-- Disable transformation
 
                     let mut stdout = io::stdout().lock();
                     if let Err(e) = stdout.write_all(output_str.as_bytes()) {
