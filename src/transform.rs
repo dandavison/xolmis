@@ -138,3 +138,138 @@ fn format_osc8_hyperlink(url: &str, text: &str) -> String {
         text
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::path::PathBuf;
+
+    // Helper to get the absolute path of a file relative to the crate root
+    fn get_crate_abs_path(relative_path: &str) -> PathBuf {
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        PathBuf::from(manifest_dir).join(relative_path).canonicalize().unwrap()
+    }
+
+    // Helper to create the expected cursor:// link format
+    fn make_link_url(abs_path: &Path, line: u32) -> String {
+        format!("cursor://file/{}:{}", abs_path.to_string_lossy(), line)
+    }
+
+    // Helper to format the OSC 8 sequence
+    fn make_osc8_link(url: &str, text: &str) -> String {
+        format!("\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", url, text)
+    }
+
+    #[test]
+    fn test_no_match() {
+        let input = "This is a simple line of text without any paths.";
+        let cwd = env::current_dir().unwrap();
+        let expected = input;
+        let actual = transform(input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_simple_path_line() {
+        let input = "Found error in Cargo.toml:5";
+        let cwd = env::current_dir().unwrap();
+        let abs_path = get_crate_abs_path("Cargo.toml");
+        let url = make_link_url(&abs_path, 5);
+        let link_text = "Cargo.toml:5";
+        let expected = format!("Found error in {}", make_osc8_link(&url, link_text));
+        let actual = transform(input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_python_traceback() {
+        // We use Cargo.toml here as a stand-in for a python file for existence check
+        let abs_path = get_crate_abs_path("Cargo.toml");
+        let abs_path_str = abs_path.to_string_lossy();
+        let input = format!("  File \"{}\", line 10, in <module>", abs_path_str);
+        let cwd = env::current_dir().unwrap();
+
+        let url = make_link_url(&abs_path, 10);
+        let link_text_owned = format!("File \"{}\", line 10", abs_path_str);
+        let expected = format!("  {}, in <module>", make_osc8_link(&url, &link_text_owned));
+
+        let actual = transform(&input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+     #[test]
+    fn test_ipdb_traceback() {
+        // Test with absolute path
+        let abs_path = get_crate_abs_path("Cargo.toml");
+        let abs_path_str = abs_path.to_string_lossy();
+        let input = format!("> {}(22) some_func()", abs_path_str);
+        let cwd = env::current_dir().unwrap();
+
+        let url = make_link_url(&abs_path, 22);
+        let link_text_owned = format!("> {}(22)", abs_path_str);
+        let expected = format!("{} some_func()", make_osc8_link(&url, &link_text_owned));
+
+        let actual = transform(&input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_ansi_color() {
+        let input = "Error: \x1b[31mCargo.toml:15\x1b[0m is bad.";
+        let cwd = env::current_dir().unwrap();
+        let abs_path = get_crate_abs_path("Cargo.toml");
+        let url = make_link_url(&abs_path, 15);
+        let link_text = "Cargo.toml:15";
+        // The link should be inserted *inside* the color codes
+        let expected = format!(
+            "Error: \x1b[31m{}\x1b[0m is bad.",
+            make_osc8_link(&url, link_text)
+        );
+        let actual = transform(input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_multiple_matches() {
+        let input = "See Cargo.toml:3 and src/main.rs:10 for details.";
+        let cwd = env::current_dir().unwrap();
+        let path1 = get_crate_abs_path("Cargo.toml");
+        let path2 = get_crate_abs_path("src/main.rs");
+        let url1 = make_link_url(&path1, 3);
+        let url2 = make_link_url(&path2, 10);
+        let link_text1 = "Cargo.toml:3";
+        let link_text2 = "src/main.rs:10";
+        let expected = format!(
+            "See {} and {} for details.",
+            make_osc8_link(&url1, link_text1),
+            make_osc8_link(&url2, link_text2)
+        );
+        let actual = transform(input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+     #[test]
+    fn test_relative_paths() {
+        // Assumes src/main.rs exists
+        let input = "Check src/main.rs:1 for setup.";
+        let cwd = env::current_dir().unwrap(); // Should be crate root
+        let abs_path = get_crate_abs_path("src/main.rs");
+        let url = make_link_url(&abs_path, 1);
+        let link_text = "src/main.rs:1";
+        let expected = format!("Check {} for setup.", make_osc8_link(&url, link_text));
+        let actual = transform(input, &cwd);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_non_existent_path() {
+        // This path:line should not be linked because the file doesn't exist
+        // and it doesn't contain typical path separators like / or .
+        let input = "NonExistentFile:123 is not a real file.";
+        let cwd = env::current_dir().unwrap();
+        let expected = input; // Expect no transformation
+        let actual = transform(input, &cwd);
+        assert_eq!(actual, expected);
+    }
+}
