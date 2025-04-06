@@ -196,25 +196,6 @@ fn strip_ansi_codes_from_strings_iterator<'a>(
         .join("")
 }
 
-pub fn explain_ansi(line: &str, colorful: bool) -> String {
-    use crate::style::Style;
-
-    parse_style_sections(line)
-        .into_iter()
-        .map(|(ansi_term_style, s)| {
-            let style = Style {
-                ansi_term_style,
-                ..Style::default()
-            };
-            if colorful {
-                format!("({}){}", style.to_painted_string(), style.paint(s))
-            } else {
-                format!("({style}){s}")
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use unicode_width::UnicodeWidthStr;

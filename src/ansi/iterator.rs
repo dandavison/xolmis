@@ -281,74 +281,7 @@ fn parse_sgr_color(params: &mut dyn Iterator<Item = u16>) -> Option<ansi_term::C
 mod tests {
 
     use super::{AnsiElementIterator, Element};
-    use crate::style;
 
-    #[test]
-    fn test_iterator_parse_git_style_strings() {
-        for (git_style_string, git_output) in &*style::tests::GIT_STYLE_STRING_EXAMPLES {
-            let mut it = AnsiElementIterator::new(git_output);
-
-            if *git_style_string == "normal" {
-                // This one has a different pattern
-                assert!(
-                    matches!(it.next().unwrap(), Element::Sgr(s, _, _) if s == ansi_term::Style::default())
-                );
-                assert!(
-                    matches!(it.next().unwrap(), Element::Text(i, j) if &git_output[i..j] == "text")
-                );
-                assert!(
-                    matches!(it.next().unwrap(), Element::Sgr(s, _, _) if s == ansi_term::Style::default())
-                );
-                continue;
-            }
-
-            // First element should be a style
-            let element = it.next().unwrap();
-            match element {
-                Element::Sgr(style, _, _) => assert!(style::ansi_term_style_equality(
-                    style,
-                    style::Style::from_git_str(git_style_string).ansi_term_style
-                )),
-                _ => unreachable!(),
-            }
-
-            // Second element should be text: "+"
-            assert!(matches!(
-                it.next().unwrap(),
-                Element::Text(i, j) if &git_output[i..j] == "+"));
-
-            // Third element is the reset style
-            assert!(matches!(
-                it.next().unwrap(),
-                Element::Sgr(s, _, _) if s == ansi_term::Style::default()));
-
-            // Fourth element should be a style
-            let element = it.next().unwrap();
-            match element {
-                Element::Sgr(style, _, _) => assert!(style::ansi_term_style_equality(
-                    style,
-                    style::Style::from_git_str(git_style_string).ansi_term_style
-                )),
-                _ => unreachable!(),
-            }
-
-            // Fifth element should be text: "text"
-            assert!(matches!(
-                it.next().unwrap(),
-                Element::Text(i, j) if &git_output[i..j] == "text"));
-
-            // Sixth element is the reset style
-            assert!(matches!(
-                it.next().unwrap(),
-                Element::Sgr(s, _, _) if s == ansi_term::Style::default()));
-
-            assert!(matches!(
-                it.next().unwrap(),
-                Element::Text(i, j) if &git_output[i..j] == "\n"));
-
-            assert!(it.next().is_none());
-        }
-    }
 
     #[test]
     fn test_iterator_1() {
