@@ -10,3 +10,4 @@ edition = "2021"
 pty-process = "0.5"
 regex = "1"
 nix = { version = "0.29", features = ["term"] }
+terminal_size = "0.3"

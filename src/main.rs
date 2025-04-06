@@ -1,10 +1,12 @@
 use pty_process::blocking::{Command, Pty, Pts};
+use pty_process::Size;
 use std::env;
 use std::io::{self, Read, Write, IsTerminal};
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::process::{ExitStatus, Child};
 use std::fs::File;
 use std::thread;
+use terminal_size::{terminal_size, Height, Width};
 
 // Import termios functions and flags from nix
 use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, ControlFlags};
@@ -69,6 +71,9 @@ fn main() -> io::Result<()> {
     termios::tcsetattr(stdin_fd, termios::SetArg::TCSANOW, &raw_termios)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to set raw terminal attributes: {}", e)))?;
 
+    // Get initial terminal size
+    let term_size = terminal_size();
+
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     println!(
         "Starting xolmis: Spawning '{}' in a PTY...",
@@ -76,8 +81,20 @@ fn main() -> io::Result<()> {
     );
 
     let cmd = Command::new(&shell);
-    let (pty, pts): (Pty, Pts) = pty_process::blocking::open()
+    // Make pty mutable so we can resize it
+    let (mut pty, pts): (Pty, Pts) = pty_process::blocking::open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open PTY: {}", e)))?;
+
+    // --- Set initial PTY size ---
+    if let Some((Width(cols), Height(rows))) = term_size {
+        println!("Resizing PTY to {}x{}", cols, rows);
+        let pty_size = Size::new(rows, cols);
+        pty.resize(pty_size)
+           .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to resize PTY: {}", e)))?;
+    } else {
+        eprintln!("Warning: Could not get terminal size. PTY might have incorrect dimensions.");
+    }
+    // --- End PTY size setup ---
 
     let mut child: Child = cmd.spawn(pts)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to spawn process: {}", e)))?;
