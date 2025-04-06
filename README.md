@@ -1,4 +1,14 @@
+<p align="center">
+  <img src="https://cdn.download.ams.birds.cornell.edu/api/v1/asset/587510951/1200" alt="Image" width="400">
+  <br>
+  <span style="font-size: small; color: gray;"><i>Xolmis velatus</i> (White-rumped Monjita)</span>
+</p>
+
 # xolmis: Terminal Output Transformer
+
+_xolmis was designed and implemented by gemini-2.5-pro-exp-03-25 using Cursor's agent mode, including code comments and
+README (but excluding the [ansi](src/ansi) module)._
+
 
 ## Problem
 
@@ -27,19 +37,14 @@ xolmis acts as a wrapper around your interactive shell, intercepting its input a
 
 1.  **Build:**
     ```bash
-    cargo build 
-    # Or for optimized build:
-    # cargo build --release
+    cargo build --release
     ```
 2.  **Run:** Launch `xolmis` directly from your normal shell session (running inside tmux or your preferred terminal):
     ```bash
-    ./target/debug/xolmis 
-    # Or for release build:
-    # ./target/release/xolmis
+    ./target/release/xolmis
     ```
 3.  **Interact:** Use the wrapped shell session as normal. Output matching the rules in `src/transform.rs` (currently `path:line` patterns) should appear as hyperlinks.
-4.  **Exit:** Type `exit` in the `xolmis` session.
-5.  **Reset Terminal (if needed):** If your original terminal prompt looks strange after exiting `xolmis`, run:
+4.  **Reset Terminal (if needed):** If your original terminal prompt looks strange after exiting `xolmis`, run:
     ```bash
     reset
     ```
@@ -49,12 +54,10 @@ xolmis acts as a wrapper around your interactive shell, intercepting its input a
 Once stable, instead of running manually, you could add logic to your shell's startup file (e.g., `~/.zshrc`) to automatically wrap your sessions:
 
 ```bash
-# Add near the end of ~/.zshrc
-# If this is an interactive shell and not already inside xolmis, execute xolmis
-if [[ -o interactive && -z "$XOLMIS_ACTIVE" && -x "/path/to/your/xolmis/release/binary" ]]; then
-  export XOLMIS_ACTIVE="true" # Prevent recursive loops
-  # Replace the current zsh process with xolmis
-  exec /path/to/your/xolmis/release/binary
+# Add as the last line of your shell config
+if [ -z "$XOLMIS" ]; then
+    export XOLMIS="true"
+    exec /PATH/TO/xolmis
 fi
 ```
 (Note: While the terminal restoration issue mainly affects running `xolmis` as a child process during development, the unsafe file descriptor handling issue should ideally be addressed for robust `exec` integration). 
