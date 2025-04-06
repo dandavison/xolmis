@@ -47,9 +47,10 @@ use terminal_size::{terminal_size, Height, Width};
 // The `nix` crate provides safe wrappers around low-level Unix APIs.
 use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, ControlFlags};
 
-// Declare the modules responsible for transformations and ANSI parsing.
+// Declare the modules responsible for transformations, ANSI parsing, and rules.
 mod transform;
 mod ansi;
+mod rules;
 
 // Imports for streaming UTF-8 decoding.
 use encoding_rs::UTF_8;

@@ -1,17 +1,9 @@
 use std::path::{Path, PathBuf};
-use regex::Regex;
-use lazy_static::lazy_static;
+
+// Use the updated types from the rules module
+use crate::rules::{CompiledRule, get_compiled_rules};
 
 use crate::ansi::iterator::{AnsiElementIterator, Element};
-
-lazy_static! {
-    // Python: File "/path/to/file.py", line 123
-    static ref PYTHON_TRACE_RE: Regex = Regex::new(r#"File "([^"]+)", line (\d+)"#).unwrap();
-    // IPDB: > /path/to/file.py(123) or -> /path/to/file.py(123)
-    static ref IPDB_TRACE_RE: Regex = Regex::new(r"^[->]\s*(\S+)\((\d+)\)").unwrap();
-    // Compiler/General: path/to/file.py:123 or /abs/path:45 etc.
-    static ref FILE_PATH_LINE_RE: Regex = Regex::new(r"([a-zA-Z0-9-_./]+):(\d+)").unwrap();
-}
 
 #[derive(Debug)]
 struct MatchInfo<'a> {
@@ -20,12 +12,14 @@ struct MatchInfo<'a> {
     text: &'a str,
     path: &'a str,
     line: u32,
-    #[allow(dead_code)] // Could be used for logging/debugging
+    #[allow(dead_code)] // Allow this field to be unused for now
     rule_name: &'static str,
 }
 
 pub fn transform(chunk: &str, cwd: &Path) -> String {
-    let mut output = String::with_capacity(chunk.len()); // Start with same capacity, may grow
+    let mut output = String::with_capacity(chunk.len());
+    // Get the compiled rules
+    let available_rules = get_compiled_rules();
 
     for element in AnsiElementIterator::new(chunk) {
         match element {
@@ -33,10 +27,10 @@ pub fn transform(chunk: &str, cwd: &Path) -> String {
                 let text_segment = &chunk[start..end];
                 let mut matches = Vec::new();
 
-                // Collect matches from all rules within this segment
-                collect_matches(&PYTHON_TRACE_RE, text_segment, "Python", 1, 2, &mut matches);
-                collect_matches(&IPDB_TRACE_RE, text_segment, "IPDB", 1, 2, &mut matches);
-                collect_matches(&FILE_PATH_LINE_RE, text_segment, "FilePathLine", 1, 2, &mut matches);
+                // Collect matches by iterating through the compiled rules
+                for rule in available_rules {
+                    collect_matches(rule, text_segment, &mut matches);
+                }
 
                 // Sort matches by start index to process them in order
                 matches.sort_by_key(|m| m.start);
@@ -51,8 +45,6 @@ pub fn transform(chunk: &str, cwd: &Path) -> String {
                         let full_path = resolve_path(cwd, m.path);
 
                         // Heuristic check: Only create link if path exists or looks plausible
-                        // (contains '/', starts with '.', or is absolute).
-                        // Avoids linking things like "http:80" or "UUID:123".
                         let should_link = full_path.exists() ||
                                           m.path.contains('/') ||
                                           m.path.starts_with('.') ||
@@ -92,18 +84,15 @@ pub fn transform(chunk: &str, cwd: &Path) -> String {
     output
 }
 
-// Helper to collect matches for a given regex
+// Updated helper to use CompiledRule struct
 fn collect_matches<'a>(
-    regex: &Regex,
+    rule: &CompiledRule,
     text_segment: &'a str,
-    rule_name: &'static str,
-    path_group_index: usize,
-    line_group_index: usize,
     matches: &mut Vec<MatchInfo<'a>>,
 ) {
-    for caps in regex.captures_iter(text_segment) {
+    for caps in rule.regex.captures_iter(text_segment) {
         if let (Some(match_obj), Some(path_match), Some(line_num_match)) =
-            (caps.get(0), caps.get(path_group_index), caps.get(line_group_index))
+            (caps.get(0), caps.get(rule.path_group_index), caps.get(rule.line_group_index))
         {
             if let Ok(line_num) = line_num_match.as_str().parse::<u32>() {
                 // Basic check: don't add if path_match is empty
@@ -114,7 +103,7 @@ fn collect_matches<'a>(
                         text: match_obj.as_str(),
                         path: path_match.as_str(),
                         line: line_num,
-                        rule_name,
+                        rule_name: rule.name,
                     });
                 }
             }
@@ -132,7 +121,6 @@ fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
         cwd.join(path)
     }
 }
-
 
 // Creates a hyperlink target URL (using custom cursor:// scheme for potential editor integration)
 fn format_cursor_hyperlink(absolute_path: &Path, line: u32) -> String {
