@@ -115,7 +115,7 @@ fn main() -> io::Result<()> {
     // Clone the settings again to create a modified version for raw mode.
     let mut raw_termios = original_termios.clone();
 
-    // Configure raw mode settings.
+    // Configure and apply raw mode settings.
     // Raw mode disables most of the kernel's terminal processing:
     // - No line buffering: Characters are available to read immediately.
     // - No echoing: Typed characters aren't automatically printed to the screen.
@@ -124,6 +124,10 @@ fn main() -> io::Result<()> {
     // - No flow control (IXON/IXOFF).
     // This allows the application (xolmis, and subsequently the shell inside the PTY)
     // to handle all input interpretation and output formatting itself.
+    // This is essential for interactive shells; without raw mode, the OS terminal
+    // driver buffers lines and interprets control characters (like arrow keys,
+    // backspace, Ctrl+C). This prevents the shell's own line editor (ZLE) and
+    // key bindings from working correctly, as it wouldn't receive the raw key events.
     raw_termios.input_flags &= !(InputFlags::IGNBRK | InputFlags::BRKINT | InputFlags::PARMRK | InputFlags::ISTRIP | InputFlags::INLCR | InputFlags::IGNCR | InputFlags::ICRNL | InputFlags::IXON);
     raw_termios.output_flags &= !(OutputFlags::OPOST);
     raw_termios.local_flags &= !(LocalFlags::ECHO | LocalFlags::ECHONL | LocalFlags::ICANON | LocalFlags::ISIG | LocalFlags::IEXTEN);
@@ -159,10 +163,10 @@ fn main() -> io::Result<()> {
     let (pty, pts): (Pty, Pts) = pty_process::blocking::open()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to open PTY: {}", e)))?;
 
-    // --- Set initial PTY size ---
-    // If we obtained the real terminal size, resize the PTY master to match.
-    // This ensures programs running inside the PTY (like fzf or the shell itself)
-    // get the correct dimensions and can draw their UI properly.
+    // Set initial PTY size.
+    // Programs running inside the PTY (like fzf, editors) query the PTY's size
+    // to render their UI. If not explicitly set, the PTY might have incorrect default
+    // dimensions, causing rendering errors or crashes (e.g., fzf panic).
     if let Some((Width(cols), Height(rows))) = term_size {
         // println!("Resizing PTY to {}x{}", cols, rows); // Can be noisy
         let pty_size = Size::new(rows, cols);
@@ -189,9 +193,12 @@ fn main() -> io::Result<()> {
     // The `Pty` object owns the master file descriptor.
     // We cannot simply clone `Pty` as it doesn't implement `Clone`.
     // Using `Arc<Mutex<Pty>>` caused deadlocks previously due to blocking reads holding the lock.
+    // The safe `Arc<Mutex<Pty>>` approach caused deadlocks due to blocking reads
+    // holding the lock needed by the writer. Non-blocking I/O attempts failed due to
+    // build issues. This unsafe approach avoids the deadlock but causes an IO safety
+    // violation (double-close attempt) on exit, which is currently accepted.
     // Therefore, we resort to `unsafe` code to duplicate the file descriptor.
     // This gives each thread its own `File` handle pointing to the same underlying PTY master.
-    //
     // **WARNING:** This is fundamentally unsafe because `File::from_raw_fd` takes ownership.
     // Both `File` objects now believe they own the FD and will try to close it on Drop.
     // This leads to a double-close attempt, causing the "IO Safety violation" runtime error
@@ -213,11 +220,13 @@ fn main() -> io::Result<()> {
     // and writes to real stdout.
     let output_thread = thread::spawn(move || {
         // Wrap the PTY reader file handle with a streaming UTF-8 decoder.
-        // This handles cases where multi-byte UTF-8 characters are split across
-        // buffer reads, preventing `` replacement characters.
+        // Simple `read` calls can split multi-byte UTF-8 characters across buffer
+        // boundaries. Processing these chunks individually with `String::from_utf8_lossy`
+        // previously caused `` replacement characters to appear incorrectly in the output.
+        // This streaming decoder correctly handles state across reads.
         let mut decoder = DecodeReaderBytesBuilder::new()
-            .encoding(Some(UTF_8)) // Specify UTF-8 encoding.
-            .build(pty_reader_file); // Takes ownership of the reader file handle.
+            .encoding(Some(UTF_8))
+            .build(pty_reader_file);
 
         // Buffer for the decoded bytes.
         let mut byte_buffer = [0; 2048];
@@ -333,8 +342,10 @@ fn main() -> io::Result<()> {
     // --- Exit --- 
     println!("xolmis finished.");
     // Use immediate exit via std::process::exit.
-    // This avoids potential hangs waiting for the input_thread.join() above.
-    // **Known Issue:** This prevents the `_term_restore` destructor from running,
+    // Letting `main` return naturally caused hangs because `input_thread.join()`
+    // would block indefinitely waiting on `stdin.read()` after the child shell had exited.
+    // Using `exit` terminates all threads abruptly, avoiding the hang.
+    // Known Issue: This prevents the `_term_restore` destructor from running,
     // leaving the terminal in raw mode.
     std::process::exit(status.code().unwrap_or(1));
     // --- End Exit ---
