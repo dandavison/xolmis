@@ -11,9 +11,6 @@ use terminal_size::{terminal_size, Height, Width};
 // Import termios functions and flags from nix
 use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, ControlFlags};
 
-// Import Regex
-use regex::Regex;
-
 // Declare the transform module
 mod transform;
 
@@ -108,9 +105,6 @@ fn main() -> io::Result<()> {
     let thread_cwd = cwd.clone();
 
     let output_thread = thread::spawn(move || {
-        // Create the Regex once
-        let re = Regex::new(r"^([a-zA-Z-_./]+):(\d+)").unwrap(); // Adjust regex as needed
-
         let mut pty_out = pty_reader_file;
         let mut buffer = [0; 2048];
 
@@ -121,8 +115,8 @@ fn main() -> io::Result<()> {
                     let output_bytes = &buffer[..n];
                     let lossy_str = String::from_utf8_lossy(output_bytes);
 
-                    // Apply transformation using the helper function from the module
-                    let transformed_str = transform::transform(&lossy_str, &thread_cwd, &re);
+                    // Correct call signature for transform::transform
+                    let transformed_str = transform::transform(&lossy_str, &thread_cwd);
 
                     let mut stdout = io::stdout().lock();
                     if let Err(e) = stdout.write_all(transformed_str.as_bytes()) {
