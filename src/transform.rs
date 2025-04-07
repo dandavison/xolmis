@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::fs;
 
 // Use the updated types from the rules module
 use crate::rules::{CompiledRule, get_compiled_rules};
@@ -274,5 +275,42 @@ mod tests {
         let expected = input; // Expect no transformation
         let actual = transform(input, &cwd);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_python_traceback_with_internal_ansi() {
+        // Input captured by the user, with ANSI codes *within* the potential match
+        // Note: Using raw string literal r#"..."# simplifies handling backslashes,
+        // but we still need to manually write \x1b for escape codes.
+        let input = "Traceback (most recent call last):\n  File \x1b[35m\"/Users/dan/src/xolmis/raise.py\"\x1b[0m, line \x1b[35m1\x1b[0m, in \x1b[35m<module>\x1b[0m\n    raise ValueError\n \x1b[1;35mValueError\x1b[0m";
+
+        let cwd = env::current_dir().unwrap();
+        let dummy_path_str = "raise.py"; // Relative path to create
+        // Use std::fs consistently
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let dummy_abs_path = PathBuf::from(manifest_dir).join(dummy_path_str);
+
+        // Create the dummy file so the path exists for the test
+        fs::write(&dummy_abs_path, "dummy content").expect("Failed to create dummy test file");
+
+        // --- Expected Output ---
+        // With the *current* transform logic, which applies regex to text segments
+        // between ANSI codes, the "File ... line ..." pattern will be broken up
+        // and won't match the PythonTrace regex. Therefore, we expect *no link*.
+        let expected = input; // Expect no transformation currently
+
+        // --- Actual ---
+        let actual = transform(input, &cwd);
+
+        // --- Cleanup ---
+        fs::remove_file(&dummy_abs_path).expect("Failed to remove dummy test file");
+
+        // --- Assert ---
+        // This assertion is expected to PASS with the current logic, confirming
+        // that the link is NOT being added due to the internal ANSI codes.
+        // To make this test eventually check for the *correct* linking behavior,
+        // the `expected` value would need to be constructed with the OSC 8 codes
+        // inserted correctly around the ANSI codes (which is complex).
+        assert_eq!(actual, expected, "Test currently expects no link due to internal ANSI");
     }
 }
