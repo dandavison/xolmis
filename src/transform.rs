@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::fs;
 
 // Use the updated types from the rules module
 use crate::rules::{CompiledRule, get_compiled_rules};
@@ -279,38 +278,52 @@ mod tests {
 
     #[test]
     fn test_python_traceback_with_internal_ansi() {
-        // Input captured by the user, with ANSI codes *within* the potential match
-        // Note: Using raw string literal r#"..."# simplifies handling backslashes,
-        // but we still need to manually write \x1b for escape codes.
-        let input = "Traceback (most recent call last):\n  File \x1b[35m\"/Users/dan/src/xolmis/raise.py\"\x1b[0m, line \x1b[35m1\x1b[0m, in \x1b[35m<module>\x1b[0m\n    raise ValueError\n \x1b[1;35mValueError\x1b[0m";
-
+        // Test case demonstrating the limitation with ANSI codes inside a potential match.
         let cwd = env::current_dir().unwrap();
-        let dummy_path_str = "raise.py"; // Relative path to create
-        // Use std::fs consistently
-        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let dummy_abs_path = PathBuf::from(manifest_dir).join(dummy_path_str);
+        let abs_path = get_crate_abs_path("Cargo.toml"); // Use existing file
+        let abs_path_str = abs_path.to_string_lossy();
+        let line_num = 5; // Arbitrary line number
 
-        // Create the dummy file so the path exists for the test
-        fs::write(&dummy_abs_path, "dummy content").expect("Failed to create dummy test file");
+        // 1. Define the exact text segment that *should* be hyperlinked (incl. internal ANSI)
+        let text_to_be_hyperlinked = format!(
+            "  File \x1b[35m\"{}\"\x1b[0m, line \x1b[35m{}\x1b[0m",
+            abs_path_str, line_num
+        );
 
-        // --- Expected Output ---
-        // With the *current* transform logic, which applies regex to text segments
-        // between ANSI codes, the "File ... line ..." pattern will be broken up
-        // and won't match the PythonTrace regex. Therefore, we expect *no link*.
-        let expected = input; // Expect no transformation currently
+        // 2. Construct the full input string using the segment above
+        let input = format!(
+            "Traceback (most recent call last):\n{}, in \x1b[35m<module>\x1b[0m\n    raise ValueError\n \x1b[1;35mValueError\x1b[0m",
+            text_to_be_hyperlinked
+        );
 
         // --- Actual ---
-        let actual = transform(input, &cwd);
+        let actual = transform(&input, &cwd);
 
-        // --- Cleanup ---
-        fs::remove_file(&dummy_abs_path).expect("Failed to remove dummy test file");
+
 
         // --- Assert ---
-        // This assertion is expected to PASS with the current logic, confirming
-        // that the link is NOT being added due to the internal ANSI codes.
-        // To make this test eventually check for the *correct* linking behavior,
-        // the `expected` value would need to be constructed with the OSC 8 codes
-        // inserted correctly around the ANSI codes (which is complex).
-        assert_eq!(actual, expected, "Test currently expects no link due to internal ANSI");
+        // This assertion should FAIL with the current transform logic because it cannot
+        // match the pattern across the internal ANSI codes.
+        // 3. Define the *expected* (linked) output (This is the target state)
+        let link_url = make_link_url(&abs_path, line_num);
+        let expected_linked_segment = make_osc8_link(&link_url, &text_to_be_hyperlinked);
+        let expected = format!(
+            "Traceback (most recent call last):\n{}, in \x1b[35m<module>\x1b[0m\n    raise ValueError\n \x1b[1;35mValueError\x1b[0m",
+            expected_linked_segment
+        );
+        assert_eq!(
+            actual,
+            expected,
+            "Test expects hyperlink around 'File..., line...' segment, including internal ANSI"
+        );
+
+        // --- To make this test PASS with CURRENT logic (demonstrating the bug): ---
+        // Comment out the assertion above and uncomment the one below.
+        // This asserts that the output is identical to the input (no link added).
+        // assert_eq!(
+        //     actual,
+        //     input, // Assert no change occurred
+        //     "Test currently expects NO link due to internal ANSI (modify test to see failure)"
+        // );
     }
 }
