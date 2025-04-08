@@ -328,11 +328,13 @@ mod tests {
         let cwd = env::current_dir().unwrap();
         let abs_path = get_crate_abs_path("Cargo.toml");
         let url = make_link_url(&abs_path, 15);
-        let link_text = "Cargo.toml:15";
-        // The link should be inserted *inside* the color codes
+        // The link text now INCLUDES the trailing ANSI reset code
+        let link_text_with_ansi = "Cargo.toml:15\x1b[0m";
+        // The link should be inserted *after* the opening color code,
+        // wrap the text INCLUDING its trailing reset code.
         let expected = format!(
-            "Error: \x1b[31m{}\x1b[0m is bad.",
-            make_osc8_link(&url, link_text)
+            "Error: \x1b[31m{} is bad.",
+            make_osc8_link(&url, link_text_with_ansi)
         );
         let actual = transform(input, &cwd);
         assert_eq!(actual, expected);
