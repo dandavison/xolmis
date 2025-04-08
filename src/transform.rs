@@ -20,13 +20,12 @@ struct MatchInfo<'a> {
     rule_name: &'static str,
 }
 
-pub fn transform(chunk: &str, cwd: &Path) -> String {
-    // Core logic now works with the original chunk
-    transform_and_reapply_ansi(chunk, cwd)
-}
-
-// Renamed function to clarify its purpose
-fn transform_and_reapply_ansi(original_chunk: &str, cwd: &Path) -> String {
+pub fn transform(original_chunk: &str, cwd: &Path) -> String {
+    // Check if the chunk contains the OSC 8 hyperlink introducer.
+    // If it does, return the chunk verbatim to avoid nested links.
+    if original_chunk.contains("\x1b]8;;") {
+        return original_chunk.to_string();
+    }
     let stripped_chunk = strip_ansi_codes(original_chunk);
     let mut output = String::with_capacity(original_chunk.len());
     let available_rules = get_compiled_rules();
