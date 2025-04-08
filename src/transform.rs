@@ -3,13 +3,17 @@ use std::path::{Path, PathBuf};
 // Use the updated types from the rules module
 use crate::rules::{CompiledRule, get_compiled_rules};
 
-use crate::ansi::strip_ansi_codes;
+use crate::ansi::{strip_ansi_codes, ansi_preserving_index};
+use crate::ansi::iterator::{AnsiElementIterator, Element};
 
 #[derive(Debug)]
 struct MatchInfo<'a> {
-    start: usize,
-    end: usize,
-    text: &'a str,
+    // Start and end character indices in the *stripped* text
+    stripped_start: usize,
+    stripped_end: usize,
+    // The matched text *without* internal ANSI codes (used for whitespace check)
+    #[allow(dead_code)] // Allow dead code for now, might be used later
+    stripped_text: &'a str,
     path: &'a str,
     line: u32,
     #[allow(dead_code)] // Allow this field to be unused for now
@@ -17,80 +21,191 @@ struct MatchInfo<'a> {
 }
 
 pub fn transform(chunk: &str, cwd: &Path) -> String {
-    let transformed = transform_stripped(&strip_ansi_codes(chunk), cwd);
-    // TODO: Add back the ANSI codes
-    transformed
+    // Core logic now works with the original chunk
+    transform_and_reapply_ansi(chunk, cwd)
 }
 
-pub fn transform_stripped(chunk: &str, cwd: &Path) -> String {
-    let mut output = String::with_capacity(chunk.len());
-    // Get the compiled rules
+// Renamed function to clarify its purpose
+fn transform_and_reapply_ansi(original_chunk: &str, cwd: &Path) -> String {
+    let stripped_chunk = strip_ansi_codes(original_chunk);
+    let mut output = String::with_capacity(original_chunk.len());
     let available_rules = get_compiled_rules();
-
     let mut matches = Vec::new();
 
-    // Collect matches by iterating through the compiled rules
+    // Collect matches based on the stripped chunk
     for rule in available_rules {
-        collect_matches(rule, chunk, &mut matches);
+        collect_matches(rule, &stripped_chunk, &mut matches);
     }
 
-    // Sort matches by start index to process them in order
-    matches.sort_by_key(|m| m.start);
+    // Sort matches by start index in the stripped text
+    matches.sort_by_key(|m| m.stripped_start);
 
-    let mut last_match_end = 0;
+    let mut last_appended_original_byte_end = 0;
+    let mut last_processed_stripped_end = 0;
+    let original_bytes = original_chunk.as_bytes();
 
-    // Process non-overlapping matches
     for m in matches {
-        // Ensure this match doesn't overlap with the previous one we processed
-        if m.start >= last_match_end {
-             // Resolve path relative to cwd
-            let full_path = resolve_path(cwd, m.path);
+        // Ensure this match (in stripped text space) doesn't overlap with the previous one processed
+        if m.stripped_start >= last_processed_stripped_end {
+             let full_path = resolve_path(cwd, m.path);
+             let should_link = full_path.exists() ||
+                               m.path.contains('/') ||
+                               m.path.starts_with('.') ||
+                               Path::new(m.path).is_absolute();
 
-            // Heuristic check: Only create link if path exists or looks plausible
-            let should_link = full_path.exists() ||
-                              m.path.contains('/') ||
-                              m.path.starts_with('.') ||
-                              Path::new(m.path).is_absolute();
+             if should_link {
+                 // Find the corresponding byte indices in the original chunk
+                 if let Some((original_start, original_end)) =
+                     find_original_indices(original_chunk, m.stripped_start, m.stripped_end)
+                 {
+                     // Ensure indices are still valid and ordered after potential adjustment
+                     if original_start <= original_end && original_start >= last_appended_original_byte_end {
+                         let mut link_slice_start = original_start;
 
-            if should_link {
-                // Append text before the match
-                output.push_str(&chunk[last_match_end..m.start]);
+                         // Check for leading newline case
+                         if original_start < original_chunk.len() &&
+                            original_bytes[original_start] == b'\n' &&
+                            m.stripped_text.starts_with(|c: char| c.is_whitespace())
+                         {
+                             // Append preceding text *including* the newline
+                             output.push_str(&original_chunk[last_appended_original_byte_end ..= original_start]);
+                             // Start the link slice *after* the newline
+                             if original_start + 1 <= original_end { // Avoid panic if end is newline too
+                                 link_slice_start = original_start + 1;
+                             }
+                             // If start+1 > end, the slice will be empty, which is handled below
+                         } else {
+                             // Append preceding text *excluding* the start offset
+                             output.push_str(&original_chunk[last_appended_original_byte_end .. original_start]);
+                             // Start link slice at the original start
+                             link_slice_start = original_start;
+                         }
 
-                // Format and append hyperlink
-                let link_url = format_cursor_hyperlink(&full_path, m.line);
-                let hyperlinked_text = format_osc8_hyperlink(&link_url, m.text);
-                output.push_str(&hyperlinked_text);
+                         // Append the text from the original chunk since the last append point
+                         // Get the original text slice, including ANSI codes
+                         // Use link_slice_start which might be adjusted past a leading newline
+                         // Ensure start <= end before slicing
+                         if link_slice_start <= original_end {
+                              let original_text_slice = &original_chunk[link_slice_start..original_end];
 
-                last_match_end = m.end;
+                              // Format and append hyperlink using the original text slice
+                              let link_url = format_cursor_hyperlink(&full_path, m.line);
+                              let hyperlinked_text = format_osc8_hyperlink(&link_url, original_text_slice);
+                              output.push_str(&hyperlinked_text);
+                         } else {
+                              // Slice would be invalid (start > end), append nothing for the link part
+                         }
+
+                         last_appended_original_byte_end = original_end; // Update last append point
+                         last_processed_stripped_end = m.stripped_end;   // Update last processed point in stripped text
+
+                     } else {
+                         // Adjusted indices are invalid or overlap incorrectly, skip this match for safety
+                         // We might lose a link here, but it prevents panic/corruption.
+                         // Consider logging this case if it happens frequently.
+                         last_processed_stripped_end = m.stripped_end; // Still mark as processed
+                     }
+                 } else {
+                     // Handle cases where original indices couldn't be found (should be rare)
+                     last_processed_stripped_end = m.stripped_end; // Mark as processed
+                 }
             } else {
-               // If we decided not to link, skip this match and let the text
-               // be appended normally later.
+               // Path doesn't look like a linkable path, skip linking
+               last_processed_stripped_end = m.stripped_end; // Mark as processed
+            }
+        } // else: Overlapping match, implicitly skipped by not entering the `if`
+    }
+
+    // Append the remaining text from the original chunk after the last match
+    output.push_str(&original_chunk[last_appended_original_byte_end..]);
+    output
+}
+
+// Helper to find original byte indices based on stripped indices
+fn find_original_indices(original_text: &str, stripped_start: usize, stripped_end: usize) -> Option<(usize, usize)> {
+    let original_start_byte = ansi_preserving_index(original_text, stripped_start)?;
+
+    let stripped_len = stripped_end - stripped_start;
+    let mut current_text_len = 0;
+    let mut text_content_end_byte = original_start_byte; // Byte offset where text content ends
+    let mut found_text_end = stripped_len == 0; // If zero length, we are already at the end
+
+    // 1. Find the byte offset where the text content ends
+    if !found_text_end {
+        for element in AnsiElementIterator::new(&original_text[original_start_byte..]) {
+            if let Element::Text(_start, end) = element {
+                let segment_len = end - _start;
+                if current_text_len + segment_len >= stripped_len {
+                    let remaining_len = stripped_len - current_text_len;
+                    text_content_end_byte = original_start_byte + _start + remaining_len;
+                    found_text_end = true;
+                    break; // Found the end of the text content
+                } else {
+                    current_text_len += segment_len;
+                    // Keep track of the end byte of this text segment in case it's the last before match ends
+                    text_content_end_byte = original_start_byte + end;
+                }
+            } else {
+                // If we encounter non-text before finding the text end, update potential end
+                // This handles cases where the match might end *within* ANSI codes (unlikely but possible)
+                let element_end = match element {
+                    Element::Sgr(_, _, end) => end,
+                    Element::Csi(_, end) => end,
+                    Element::Esc(_, end) => end,
+                    Element::Osc(_, end) => end,
+                    Element::Text(_, _) => unreachable!(), // Handled above
+                };
+                 text_content_end_byte = original_start_byte + element_end;
             }
         }
     }
 
-    // Append remaining text after the last processed match
-    output.push_str(&chunk[last_match_end..]);
-    output
+    // If we couldn't find the end of the text content (e.g., stripped indices out of bounds)
+    if !found_text_end {
+        return None;
+    }
+
+    // 2. Find the final end byte by consuming trailing ANSI codes
+    let mut final_end_byte = text_content_end_byte;
+    if text_content_end_byte < original_text.len() {
+        for element in AnsiElementIterator::new(&original_text[text_content_end_byte..]) {
+            match element {
+                Element::Text(_, _) => break, // Stop at the next text element
+                Element::Sgr(_, _, end) |
+                Element::Csi(_, end) |
+                Element::Esc(_, end) |
+                Element::Osc(_, end) => {
+                    // Update final end byte to include this ANSI code
+                    final_end_byte = text_content_end_byte + end;
+                }
+            }
+        }
+    }
+
+    // Basic sanity check
+    if final_end_byte > original_text.len() {
+        return None; // Should not happen if logic is correct
+    }
+
+    Some((original_start_byte, final_end_byte))
 }
 
-// Updated helper to use CompiledRule struct
+// Updated helper to use CompiledRule struct and populate MatchInfo correctly
 fn collect_matches<'a>(
     rule: &CompiledRule,
-    text_segment: &'a str,
+    stripped_text_segment: &'a str,
     matches: &mut Vec<MatchInfo<'a>>,
 ) {
-    for caps in rule.regex.captures_iter(text_segment) {
+    for caps in rule.regex.captures_iter(stripped_text_segment) {
         if let (Some(match_obj), Some(path_match), Some(line_num_match)) =
             (caps.get(0), caps.get(rule.path_group_index), caps.get(rule.line_group_index))
         {
             if let Ok(line_num) = line_num_match.as_str().parse::<u32>() {
-                // Basic check: don't add if path_match is empty
                 if !path_match.as_str().is_empty() {
                     matches.push(MatchInfo {
-                        start: match_obj.start(),
-                        end: match_obj.end(),
-                        text: match_obj.as_str(),
+                        stripped_start: match_obj.start(),
+                        stripped_end: match_obj.end(),
+                        stripped_text: match_obj.as_str(),
                         path: path_match.as_str(),
                         line: line_num,
                         rule_name: rule.name,
@@ -123,7 +238,7 @@ fn format_cursor_hyperlink(absolute_path: &Path, line: u32) -> String {
 // Formats the text with OSC 8 terminal hyperlinks
 fn format_osc8_hyperlink(url: &str, text: &str) -> String {
     format!(
-        "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
+        "]8;;{}\\{}]8;;\\", // Use double backslash for escape sequence in format!
         url,
         text
     )
@@ -288,8 +403,6 @@ mod tests {
 
         // --- Actual ---
         let actual = transform(&input, &cwd);
-
-
 
         // --- Assert ---
         // This assertion should FAIL with the current transform logic because it cannot
