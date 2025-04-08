@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 // Use the updated types from the rules module
 use crate::rules::{CompiledRule, get_compiled_rules};
 
-use crate::ansi::iterator::{AnsiElementIterator, Element};
+use crate::ansi::strip_ansi_codes;
 
 #[derive(Debug)]
 struct MatchInfo<'a> {
@@ -17,70 +17,60 @@ struct MatchInfo<'a> {
 }
 
 pub fn transform(chunk: &str, cwd: &Path) -> String {
+    let transformed = transform_stripped(&strip_ansi_codes(chunk), cwd);
+    // TODO: Add back the ANSI codes
+    transformed
+}
+
+pub fn transform_stripped(chunk: &str, cwd: &Path) -> String {
     let mut output = String::with_capacity(chunk.len());
     // Get the compiled rules
     let available_rules = get_compiled_rules();
 
-    for element in AnsiElementIterator::new(chunk) {
-        match element {
-            Element::Text(start, end) => {
-                let text_segment = &chunk[start..end];
-                let mut matches = Vec::new();
+    let mut matches = Vec::new();
 
-                // Collect matches by iterating through the compiled rules
-                for rule in available_rules {
-                    collect_matches(rule, text_segment, &mut matches);
-                }
+    // Collect matches by iterating through the compiled rules
+    for rule in available_rules {
+        collect_matches(rule, chunk, &mut matches);
+    }
 
-                // Sort matches by start index to process them in order
-                matches.sort_by_key(|m| m.start);
+    // Sort matches by start index to process them in order
+    matches.sort_by_key(|m| m.start);
 
-                let mut last_match_end = 0;
+    let mut last_match_end = 0;
 
-                // Process non-overlapping matches
-                for m in matches {
-                    // Ensure this match doesn't overlap with the previous one we processed
-                    if m.start >= last_match_end {
-                         // Resolve path relative to cwd
-                        let full_path = resolve_path(cwd, m.path);
+    // Process non-overlapping matches
+    for m in matches {
+        // Ensure this match doesn't overlap with the previous one we processed
+        if m.start >= last_match_end {
+             // Resolve path relative to cwd
+            let full_path = resolve_path(cwd, m.path);
 
-                        // Heuristic check: Only create link if path exists or looks plausible
-                        let should_link = full_path.exists() ||
-                                          m.path.contains('/') ||
-                                          m.path.starts_with('.') ||
-                                          Path::new(m.path).is_absolute();
+            // Heuristic check: Only create link if path exists or looks plausible
+            let should_link = full_path.exists() ||
+                              m.path.contains('/') ||
+                              m.path.starts_with('.') ||
+                              Path::new(m.path).is_absolute();
 
-                        if should_link {
-                            // Append text before the match
-                            output.push_str(&text_segment[last_match_end..m.start]);
+            if should_link {
+                // Append text before the match
+                output.push_str(&chunk[last_match_end..m.start]);
 
-                            // Format and append hyperlink
-                            let link_url = format_cursor_hyperlink(&full_path, m.line);
-                            let hyperlinked_text = format_osc8_hyperlink(&link_url, m.text);
-                            output.push_str(&hyperlinked_text);
+                // Format and append hyperlink
+                let link_url = format_cursor_hyperlink(&full_path, m.line);
+                let hyperlinked_text = format_osc8_hyperlink(&link_url, m.text);
+                output.push_str(&hyperlinked_text);
 
-                            last_match_end = m.end;
-                        } else {
-                           // If we decided not to link, skip this match and let the text
-                           // be appended normally later.
-                        }
-                    }
-                }
-
-                // Append remaining text after the last processed match
-                output.push_str(&text_segment[last_match_end..]);
-
-            }
-            // For non-text elements (ANSI codes), append them directly
-            Element::Sgr(_, s, e) |
-            Element::Csi(s, e) |
-            Element::Esc(s, e) |
-            Element::Osc(s, e) => {
-                output.push_str(&chunk[s..e]);
+                last_match_end = m.end;
+            } else {
+               // If we decided not to link, skip this match and let the text
+               // be appended normally later.
             }
         }
     }
 
+    // Append remaining text after the last processed match
+    output.push_str(&chunk[last_match_end..]);
     output
 }
 
