@@ -22,9 +22,6 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov
-
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -34,12 +31,5 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      - name: Run tests and generate coverage report
-        run: cargo llvm-cov --verbose --cobertura --output-path cobertura.xml
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }} # Optional: Usually not needed for public repos
-          files: cobertura.xml
-          fail_ci_if_error: true # Optional: Fail CI if Codecov upload fails 
+      - name: Run tests
+        run: cargo test --verbose 
