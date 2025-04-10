@@ -47,12 +47,7 @@ pub fn transform(original_chunk: &str, cwd: &Path) -> String {
         // Ensure this match (in stripped text space) doesn't overlap with the previous one processed
         if m.stripped_start >= last_processed_stripped_end {
              let full_path = resolve_path(cwd, m.path);
-             let should_link = full_path.exists() ||
-                               m.path.contains('/') ||
-                               m.path.starts_with('.') ||
-                               Path::new(m.path).is_absolute();
-
-             if should_link {
+             if full_path.exists() {
                  // Find the corresponding byte indices in the original chunk
                  if let Some((original_start, original_end)) =
                      find_original_indices(original_chunk, m.stripped_start, m.stripped_end)
