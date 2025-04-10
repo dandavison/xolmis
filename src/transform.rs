@@ -45,69 +45,77 @@ pub fn transform(original_chunk: &str, cwd: &Path) -> String {
 
     for m in matches {
         // Ensure this match (in stripped text space) doesn't overlap with the previous one processed
-        if m.stripped_start >= last_processed_stripped_end {
-             let full_path = resolve_path(cwd, m.path);
-             if full_path.exists() {
-                 // Find the corresponding byte indices in the original chunk
-                 if let Some((original_start, original_end)) =
-                     find_original_indices(original_chunk, m.stripped_start, m.stripped_end)
-                 {
-                     // Ensure indices are still valid and ordered after potential adjustment
-                     if original_start <= original_end && original_start >= last_appended_original_byte_end {
-                         let mut link_slice_start = original_start;
+        if m.stripped_start < last_processed_stripped_end {
+            continue; // Skip overlapping matches
+        }
 
-                         // Check for leading newline case
-                         if original_start < original_chunk.len() &&
-                            original_bytes[original_start] == b'\n' &&
-                            m.stripped_text.starts_with(|c: char| c.is_whitespace())
-                         {
-                             // Append preceding text *including* the newline
-                             output.push_str(&original_chunk[last_appended_original_byte_end ..= original_start]);
-                             // Start the link slice *after* the newline
-                             if original_start + 1 <= original_end { // Avoid panic if end is newline too
-                                 link_slice_start = original_start + 1;
-                             }
-                             // If start+1 > end, the slice will be empty, which is handled below
-                         } else {
-                             // Append preceding text *excluding* the start offset
-                             output.push_str(&original_chunk[last_appended_original_byte_end .. original_start]);
-                             // Start link slice at the original start
-                             link_slice_start = original_start;
-                         }
+        // Resolve path and check existence
+        let full_path = resolve_path(cwd, m.path);
+        if !full_path.exists() {
+            last_processed_stripped_end = m.stripped_end; // Mark as processed even if skipped
+            continue; // Skip non-existent paths
+        }
 
-                         // Append the text from the original chunk since the last append point
-                         // Get the original text slice, including ANSI codes
-                         // Use link_slice_start which might be adjusted past a leading newline
-                         // Ensure start <= end before slicing
-                         if link_slice_start <= original_end {
-                              let original_text_slice = &original_chunk[link_slice_start..original_end];
+        // Find the corresponding byte indices in the original chunk
+        let (original_start, original_end) =
+            match find_original_indices(original_chunk, m.stripped_start, m.stripped_end) {
+                Some(indices) => indices,
+                None => {
+                    // Handle cases where original indices couldn't be found (should be rare)
+                    last_processed_stripped_end = m.stripped_end; // Mark as processed
+                    continue; // Skip if mapping fails
+                }
+            };
 
-                              // Format and append hyperlink using the original text slice
-                              let link_url = format_cursor_hyperlink(&full_path, m.line);
-                              let hyperlinked_text = format_osc8_hyperlink(&link_url, original_text_slice);
-                              output.push_str(&hyperlinked_text);
-                         } else {
-                              // Slice would be invalid (start > end), append nothing for the link part
-                         }
+        // Ensure indices are still valid and ordered relative to the last appended position
+        if !(original_start <= original_end && original_start >= last_appended_original_byte_end) {
+            // Adjusted indices are invalid or overlap incorrectly, skip this match for safety
+            // We might lose a link here, but it prevents panic/corruption.
+            // Consider logging this case if it happens frequently.
+            last_processed_stripped_end = m.stripped_end; // Still mark as processed
+            continue; // Skip invalid/overlapping indices
+        }
 
-                         last_appended_original_byte_end = original_end; // Update last append point
-                         last_processed_stripped_end = m.stripped_end;   // Update last processed point in stripped text
+        // --- If we reach here, the match is valid and should be linked --- 
 
-                     } else {
-                         // Adjusted indices are invalid or overlap incorrectly, skip this match for safety
-                         // We might lose a link here, but it prevents panic/corruption.
-                         // Consider logging this case if it happens frequently.
-                         last_processed_stripped_end = m.stripped_end; // Still mark as processed
-                     }
-                 } else {
-                     // Handle cases where original indices couldn't be found (should be rare)
-                     last_processed_stripped_end = m.stripped_end; // Mark as processed
-                 }
-            } else {
-               // Path doesn't look like a linkable path, skip linking
-               last_processed_stripped_end = m.stripped_end; // Mark as processed
+        let mut link_slice_start = original_start;
+
+        // Check for leading newline case
+        if original_start < original_chunk.len() &&
+           original_bytes[original_start] == b'\n' &&
+           m.stripped_text.starts_with(|c: char| c.is_whitespace())
+        {
+            // Append preceding text *including* the newline
+            output.push_str(&original_chunk[last_appended_original_byte_end ..= original_start]);
+            // Start the link slice *after* the newline
+            if original_start + 1 <= original_end { // Avoid panic if end is newline too
+                link_slice_start = original_start + 1;
             }
-        } // else: Overlapping match, implicitly skipped by not entering the `if`
+            // If start+1 > end, the slice will be empty, which is handled below
+        } else {
+            // Append preceding text *excluding* the start offset
+            output.push_str(&original_chunk[last_appended_original_byte_end .. original_start]);
+            // Start link slice at the original start (no change needed)
+        }
+
+        // Append the text from the original chunk since the last append point
+        // Get the original text slice, including ANSI codes
+        // Use link_slice_start which might be adjusted past a leading newline
+        // Ensure start <= end before slicing
+        if link_slice_start <= original_end {
+             let original_text_slice = &original_chunk[link_slice_start..original_end];
+
+             // Format and append hyperlink using the original text slice
+             let link_url = format_cursor_hyperlink(&full_path, m.line);
+             let hyperlinked_text = format_osc8_hyperlink(&link_url, original_text_slice);
+             output.push_str(&hyperlinked_text);
+        } else {
+             // Slice would be invalid (start > end), append nothing for the link part
+        }
+
+        // Update state after successful processing
+        last_appended_original_byte_end = original_end;
+        last_processed_stripped_end = m.stripped_end;
     }
 
     // Append the remaining text from the original chunk after the last match
