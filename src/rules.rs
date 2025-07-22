@@ -5,8 +5,8 @@ use lazy_static::lazy_static;
 pub struct RuleData {
     pub name: &'static str,
     pub regex_str: &'static str,
-    pub path_group_index: usize,
-    pub line_group_index: usize,
+    pub path_group_name: &'static str,
+    pub line_group_name: Option<&'static str>,
 }
 
 // Structure holding the compiled regex and other rule info
@@ -15,28 +15,39 @@ pub struct CompiledRule {
     pub name: &'static str,
     pub regex: Regex, // Compiled regex
     pub path_group_index: usize,
-    pub line_group_index: usize,
+    pub line_group_index: Option<usize>,
 }
+
+// Regex to capture file paths, optionally followed by :line_number.
+// Matches paths starting with /, ./, ../, ~, or C:\, or containing at least one / or \.
+// It avoids matching URLs like http://... by requiring path characters.
+const FILE_PATH_REGEX_OPT_LINE: &str = r"\b(?P<path>(?:(?:~|\.|/|[a-zA-Z]:\\)[a-zA-Z0-9._\\/~-]+)|(?:[a-zA-Z0-9._~-]+[\\/][a-zA-Z0-9._\\/~-]+))(?::(?P<line>\d+))?\b";
+
+// Python traceback pattern (optional line)
+const PYTHON_TRACE_REGEX_OPT_LINE: &str = r#"^\s*File "(?P<path>.*?)"(?:, line (?P<line>\d+))?"#;
+
+// IPDB traceback pattern (optional line)
+const IPDB_TRACE_REGEX_OPT_LINE: &str = r"^>\s*(?P<path>.*?)(?:\((?P<line>\d+)\))?"#;
 
 // Define the raw rule data as a const array
 const RULES_DATA: &[RuleData] = &[
     RuleData {
-        name: "PythonTrace",
-        regex_str: r#"\s*File "([^"]+)", line (\d+)"#,
-        path_group_index: 1,
-        line_group_index: 2,
+        name: "FilePath",
+        regex_str: FILE_PATH_REGEX_OPT_LINE,
+        path_group_name: "path",
+        line_group_name: Some("line"),
     },
     RuleData {
-        name: "IpdbTrace",
-        regex_str: r"^(?:->|>)\s+(\S+)\((\d+)\)",
-        path_group_index: 1,
-        line_group_index: 2,
+        name: "PythonTraceback",
+        regex_str: PYTHON_TRACE_REGEX_OPT_LINE,
+        path_group_name: "path",
+        line_group_name: Some("line"),
     },
     RuleData {
-        name: "FilePathLine",
-        regex_str: r"([a-zA-Z0-9-_./]+):(\d+)",
-        path_group_index: 1,
-        line_group_index: 2,
+        name: "IpdbTraceback",
+        regex_str: IPDB_TRACE_REGEX_OPT_LINE,
+        path_group_name: "path",
+        line_group_name: Some("line"),
     },
 ];
 
@@ -45,12 +56,27 @@ lazy_static! {
     // It is initialized only once, the first time get_rules() is called.
     static ref COMPILED_RULES: Vec<CompiledRule> = {
         RULES_DATA.iter().map(|rule_data| {
+            let re = Regex::new(rule_data.regex_str).expect("Failed to compile regex");
+
+            // Find the capture group index for the path by name
+            let path_group_index = re
+                .capture_names()
+                .position(|name| name == Some(rule_data.path_group_name))
+                .unwrap_or_else(|| panic!("Path capture group '{}' not found in regex for rule '{}'", rule_data.path_group_name, rule_data.name));
+
+            // Find the capture group index for the line number by name, if specified
+            let line_group_index = rule_data.line_group_name.and_then(|name| {
+                re.capture_names()
+                    .position(|n| n == Some(name))
+                    // Log a warning if the named group exists in RuleData but not in regex? For now, just return None.
+                    // .or_else(|| { eprintln!("Warning: Optional line group '{}' not found in regex for rule '{}'", name, rule_data.name); None })
+            });
+
             CompiledRule {
                 name: rule_data.name,
-                // Compile the regex string here
-                regex: Regex::new(rule_data.regex_str).expect("Failed to compile regex"),
-                path_group_index: rule_data.path_group_index,
-                line_group_index: rule_data.line_group_index,
+                regex: re,
+                path_group_index,
+                line_group_index,
             }
         }).collect()
     };
@@ -60,6 +86,17 @@ lazy_static! {
 pub fn get_compiled_rules() -> &'static [CompiledRule] {
     &COMPILED_RULES
 }
+
+// List of rules: (name, regex_str, path_group_name, line_group_name)
+// The group names MUST match the named capture groups in the regex strings.
+const RULES: &[(&str, &str, &str, Option<&str>)] = &[
+    // General file paths, line number is optional
+    ("FilePath", FILE_PATH_REGEX_OPT_LINE, "path", Some("line")),
+    // Python tracebacks, line number is optional
+    ("PythonTraceback", PYTHON_TRACE_REGEX_OPT_LINE, "path", Some("line")),
+    // IPDB tracebacks, line number is optional
+    ("IpdbTraceback", IPDB_TRACE_REGEX_OPT_LINE, "path", Some("line")),
+];
 
 #[cfg(test)]
 mod tests {
@@ -73,95 +110,75 @@ mod tests {
 
     #[test]
     fn test_rule_compilation_and_content() {
-        let compiled_rules = get_compiled_rules();
-        // Iterate and check if names and indices match the source data
-        for (i, compiled) in compiled_rules.iter().enumerate() {
-            assert_eq!(compiled.name, RULES_DATA[i].name);
-            assert_eq!(compiled.path_group_index, RULES_DATA[i].path_group_index);
-            assert_eq!(compiled.line_group_index, RULES_DATA[i].line_group_index);
-            // Basic check that the regex string looks similar after compilation
-            // Note: Regex::as_str might differ slightly from the original but should be functionally equivalent.
-            // This is just a sanity check. A full regex equivalence check is complex.
-            // assert!(compiled.regex.as_str().contains(RULES_DATA[i].regex_str)); // This can be too strict/brittle
-        }
+        let rules = get_compiled_rules();
+        assert!(rules.iter().all(|r| !r.name.is_empty()));
+        // Check one rule's indices specifically using capture names
+        let file_rule = rules.iter().find(|r| r.name == "FilePath").unwrap();
+        // Find index by name for verification
+        let path_idx = file_rule.regex.capture_names().position(|n| n == Some("path"));
+        let line_idx = file_rule.regex.capture_names().position(|n| n == Some("line"));
+        assert_eq!(Some(file_rule.path_group_index), path_idx);
+        assert_eq!(file_rule.line_group_index, line_idx);
     }
 
-    fn find_rule(name: &str) -> Option<&'static CompiledRule> {
-        get_compiled_rules().iter().find(|r| r.name == name)
+    #[test]
+    fn test_file_path_regex() {
+        let rule = get_compiled_rules().iter().find(|r| r.name == "FilePath").unwrap();
+        // Path with line
+        let caps = rule.regex.captures("src/main.rs:10").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "src/main.rs");
+        assert_eq!(caps.name("line").unwrap().as_str(), "10");
+
+        // Path without line
+        let caps = rule.regex.captures("./relative/path/file.txt").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "./relative/path/file.txt");
+        assert!(caps.name("line").is_none()); // Check optional group by name
+
+        // Absolute path
+        let caps = rule.regex.captures("/absolute/path/to/file").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "/absolute/path/to/file");
+        assert!(caps.name("line").is_none()); // Check optional group by name
+
+         // Path with Windows drive letter
+         let caps = rule.regex.captures("C:\\Users\\Test\\file.rs:123").unwrap();
+         assert_eq!(caps.name("path").unwrap().as_str(), "C:\\Users\\Test\\file.rs");
+         assert_eq!(caps.name("line").unwrap().as_str(), "123");
+
+         // Invalid path (no / or \) - ensure it doesn't match our stricter path regex
+         assert!(rule.regex.captures("plainfile:10").is_none()); 
+         // URL - should not match
+         assert!(rule.regex.captures("http://example.com:80").is_none());
+         // Path ending in :
+         let caps = rule.regex.captures("/path/ends/with:").unwrap(); // Regex allows path ending like this
+         assert_eq!(caps.name("path").unwrap().as_str(), "/path/ends/with");
+         assert!(caps.name("line").is_none()); // Line group should be None
     }
 
     #[test]
     fn test_python_trace_regex() {
-        // Use the compiled rule from lazy_static
-        let rule = find_rule("PythonTrace").expect("PythonTrace rule not found");
+        let rule = get_compiled_rules().iter().find(|r| r.name == "PythonTraceback").unwrap();
+        // With line
+        let caps = rule.regex.captures("  File \"/path/to/my_module.py\", line 123").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "/path/to/my_module.py");
+        assert_eq!(caps.name("line").unwrap().as_str(), "123");
 
-        // Original test case (no leading space) - should still pass
-        let text = r#"File "/path/to/your_file.py", line 123, in some_function"#;
-        let caps = rule.regex.captures(text).expect("Regex should capture without leading space");
-        assert_eq!(caps.get(rule.path_group_index).unwrap().as_str(), "/path/to/your_file.py");
-        assert_eq!(caps.get(rule.line_group_index).unwrap().as_str(), "123");
-
-        // New test case for the bug fix (with leading spaces)
-        let text_with_spaces = r#"  File "/path/to/another.py", line 456, in func"#;
-        let caps_with_spaces = rule.regex.captures(text_with_spaces).expect("Regex should capture with leading space");
-        assert_eq!(caps_with_spaces.get(rule.path_group_index).unwrap().as_str(), "/path/to/another.py");
-        assert_eq!(caps_with_spaces.get(rule.line_group_index).unwrap().as_str(), "456");
-
-        // Original non-matching case
-        let no_match_text = "Just some regular text";
-        assert!(rule.regex.captures(no_match_text).is_none());
+        // Without line
+        let caps = rule.regex.captures("  File \"/another/path.py\"").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "/another/path.py");
+        assert!(caps.name("line").is_none()); // Check optional group by name
     }
 
     #[test]
     fn test_ipdb_trace_regex() {
-        // Find the raw rule data first
-        let rule_data = RULES_DATA.iter().find(|r| r.name == "IpdbTrace").expect("IpdbTrace rule data not found");
-        // Compile the regex specifically for this test to ensure we use the current definition
-        let rule_regex = Regex::new(rule_data.regex_str).expect("Failed to compile IpdbTrace regex for test");
+        let rule = get_compiled_rules().iter().find(|r| r.name == "IpdbTraceback").unwrap();
+        // With line
+        let caps = rule.regex.captures("> /path/to/debugger.py(45)some_func()").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "/path/to/debugger.py");
+        assert_eq!(caps.name("line").unwrap().as_str(), "45");
 
-        let text = r"-> /path/to/another_file.py(45)function_name()";
-        let caps = rule_regex.captures(text).expect("Regex should capture");
-
-        assert_eq!(caps.get(rule_data.path_group_index).unwrap().as_str(), "/path/to/another_file.py");
-        assert_eq!(caps.get(rule_data.line_group_index).unwrap().as_str(), "45");
-
-        let text_arrow_no_space = r">/path/fail.py(1)f()"; // Should not match if space is required after ->
-        assert!(rule_regex.captures(text_arrow_no_space).is_none()); // Based on current regex `^[->]\s+`
-
-        let text_with_space = r"->  spaced/path.py(99) func()";
-         let caps_space = rule_regex.captures(text_with_space).expect("Regex should capture with space");
-        assert_eq!(caps_space.get(rule_data.path_group_index).unwrap().as_str(), "spaced/path.py");
-        assert_eq!(caps_space.get(rule_data.line_group_index).unwrap().as_str(), "99");
-    }
-
-     #[test]
-    fn test_file_path_line_regex() {
-        let rule = find_rule("FilePathLine").expect("FilePathLine rule not found");
-
-        let text1 = "src/main.rs:50";
-        let caps1 = rule.regex.captures(text1).expect("Regex should capture path:line");
-        assert_eq!(caps1.get(rule.path_group_index).unwrap().as_str(), "src/main.rs");
-        assert_eq!(caps1.get(rule.line_group_index).unwrap().as_str(), "50");
-
-        let text2 = "./relative/path.txt:1";
-        let caps2 = rule.regex.captures(text2).expect("Regex should capture relative path:line");
-        assert_eq!(caps2.get(rule.path_group_index).unwrap().as_str(), "./relative/path.txt");
-        assert_eq!(caps2.get(rule.line_group_index).unwrap().as_str(), "1");
-
-        let text3 = "nodirfile:12";
-        let caps3 = rule.regex.captures(text3).expect("Regex should capture file:line");
-        assert_eq!(caps3.get(rule.path_group_index).unwrap().as_str(), "nodirfile");
-        assert_eq!(caps3.get(rule.line_group_index).unwrap().as_str(), "12");
-
-        let text4 = "path_with_underscores_and-hyphens.ext:999";
-        let caps4 = rule.regex.captures(text4).expect("Regex should capture complex filename");
-        assert_eq!(caps4.get(rule.path_group_index).unwrap().as_str(), "path_with_underscores_and-hyphens.ext");
-        assert_eq!(caps4.get(rule.line_group_index).unwrap().as_str(), "999");
-
-        let text_no_line = "just/a/path";
-        assert!(rule.regex.captures(text_no_line).is_none());
-
-        let text_no_path = ":123";
-        assert!(rule.regex.captures(text_no_path).is_none()); // The current regex requires a path part
+        // Without line
+        let caps = rule.regex.captures("> /another/script.py").unwrap();
+        assert_eq!(caps.name("path").unwrap().as_str(), "/another/script.py");
+        assert!(caps.name("line").is_none()); // Check optional group by name
     }
 } 
