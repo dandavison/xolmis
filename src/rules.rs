@@ -1,3 +1,18 @@
+// TODO
+// /Users/dan/src/temporalio/nexus-sdk-python/tests/handler/test_service_handler_decorator_collects_expected_operation_definitions.py(150)<module>()
+// -> class SyncOperationWithCallableInstance(_TestCase):
+//   /Users/dan/src/temporalio/nexus-sdk-python/tests/handler/test_service_handler_decorator_collects_expected_operation_definitions.py(158)SyncOperationWithCallableInstance()
+// -> class Service:
+//   /Users/dan/src/temporalio/nexus-sdk-python/tests/handler/test_service_handler_decorator_collects_expected_operation_definitions.py(167)Service()
+// -> _sync_operation_with_callable_instance = sync_operation(
+//   /Users/dan/src/temporalio/nexus-sdk-python/src/nexusrpc/handler/_decorators.py(301)sync_operation()
+// -> return decorator(start)
+//   /Users/dan/src/temporalio/nexus-sdk-python/src/nexusrpc/handler/_decorators.py(280)decorator()
+// -> input_type, output_type = get_start_method_input_and_output_type_annotations(  # type: ignore[var-annotated]
+// > /Users/dan/src/temporalio/nexus-sdk-python/src/nexusrpc/handler/_util.py(42)get_start_method_input_and_output_type_annotations()
+// -> pdb.set_trace()
+
+
 use regex::Regex;
 use lazy_static::lazy_static;
 
