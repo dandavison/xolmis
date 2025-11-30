@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 
 USE_XOLMIS="${1:-}"
 SESSION="bench_$$"
+DONE_SIGNAL="bench_done_$$"
+
 trap "tmux kill-session -t $SESSION 2>/dev/null" EXIT
 
 if [ "$USE_XOLMIS" = "xolmis" ]; then
@@ -16,10 +18,8 @@ fi
 
 sleep 0.3
 
-tmux send-keys -t "$SESSION" "git log -100 | delta --no-gitconfig --paging=never >/dev/null 2>&1; exit" Enter
+# Run the workload, then signal completion
+tmux send-keys -t "$SESSION" "for i in \$(seq 1 10); do git log -100 | delta --no-gitconfig --paging=never >/dev/null 2>&1; done; tmux wait-for -S $DONE_SIGNAL; exit" Enter
 
-for i in $(seq 1 30); do
-    tmux has-session -t "$SESSION" 2>/dev/null || exit 0
-    sleep 0.1
-done
-
+# Wait for the signal
+tmux wait-for "$DONE_SIGNAL"
