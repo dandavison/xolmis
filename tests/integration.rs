@@ -181,3 +181,45 @@ fn test_pager_full_screen() {
         content
     );
 }
+
+#[test]
+#[ignore = "requires SIGWINCH handling (not yet implemented)"]
+fn test_terminal_resize() {
+    let session = TestSession::new();
+
+    // Get initial size
+    session.send_keys("tput cols; tput lines");
+    thread::sleep(Duration::from_millis(100));
+    let content_before = session.capture();
+
+    // Parse initial dimensions
+    let lines: Vec<&str> = content_before.lines().collect();
+    let initial_cols: Option<u32> = lines.iter()
+        .filter_map(|l| l.trim().parse().ok())
+        .next();
+
+    // Resize the tmux pane to a different size
+    let new_cols = initial_cols.unwrap_or(80) + 20;
+    let new_lines = 30;
+    tmux(&[
+        "resize-pane", "-t", &session.name,
+        "-x", &new_cols.to_string(),
+        "-y", &new_lines.to_string()
+    ]);
+    thread::sleep(Duration::from_millis(300));
+
+    // Check size after resize
+    session.send_keys("echo \"AFTER_RESIZE: $(tput cols)x$(tput lines)\"");
+    thread::sleep(Duration::from_millis(100));
+    let content_after = session.capture();
+
+    // After resize, PTY should report new size
+    // This requires SIGWINCH handling which is not yet implemented
+    let expected = format!("AFTER_RESIZE: {}x{}", new_cols, new_lines);
+    assert!(
+        content_after.contains(&expected),
+        "terminal resize not propagated to PTY (SIGWINCH handling needed).\nExpected: {}\nGot:\n{}",
+        expected,
+        content_after
+    );
+}
