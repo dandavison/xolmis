@@ -368,12 +368,11 @@ fn main() -> io::Result<()> {
         }
     };
 
-    // Wait for the I/O threads to complete their work.
-    // If the shell exits, output_thread should finish soon after detecting EOF.
-    // input_thread might block indefinitely if stdin isn't closed (e.g., user doesn't Ctrl+D)
-    // which would cause a hang here if not for the process::exit below.
+    // Wait for output_thread to finish (it will EOF when child exits).
+    // Don't wait for input_thread - it blocks on stdin.read() which won't EOF
+    // until the controlling terminal closes. process::exit will terminate it.
     output_thread.join().expect("Output thread panicked");
-    input_thread.join().expect("Input thread panicked");
+    drop(input_thread); // Let process::exit handle it
 
     // --- Exit ---
     println!("xolmis finished.");
