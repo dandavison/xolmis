@@ -26,9 +26,17 @@ impl TestSession {
 
         // Start tmux with xolmis
         let status = tmux(&[
-            "new-session", "-d", "-s", &name, "-x", "80", "-y", "24",
+            "new-session",
+            "-d",
+            "-s",
+            &name,
+            "-x",
+            "80",
+            "-y",
+            "24",
             "./target/debug/xolmis",
-        ]).status;
+        ])
+        .status;
         assert!(status.success(), "failed to start tmux session");
 
         thread::sleep(Duration::from_millis(500));
@@ -124,11 +132,9 @@ fn test_python_traceback_format() {
     let session = TestSession::new();
     let cwd = std::env::current_dir().unwrap();
     // Use $'...' syntax for proper escape handling in bash/zsh
-    let cmd = format!(
-        "echo $'  File \"{}/src/main.rs\", line 10'",
-        cwd.display()
-    );
+    let cmd = format!("echo $'  File \"{}/src/main.rs\", line 10'", cwd.display());
     session.send_keys(&cmd);
+    thread::sleep(Duration::from_millis(100));
     let content = session.capture_with_escapes();
 
     assert!(
@@ -194,17 +200,19 @@ fn test_terminal_resize() {
 
     // Parse initial dimensions
     let lines: Vec<&str> = content_before.lines().collect();
-    let initial_cols: Option<u32> = lines.iter()
-        .filter_map(|l| l.trim().parse().ok())
-        .next();
+    let initial_cols: Option<u32> = lines.iter().filter_map(|l| l.trim().parse().ok()).next();
 
     // Resize the tmux pane to a different size
     let new_cols = initial_cols.unwrap_or(80) + 20;
     let new_lines = 30;
     tmux(&[
-        "resize-pane", "-t", &session.name,
-        "-x", &new_cols.to_string(),
-        "-y", &new_lines.to_string()
+        "resize-pane",
+        "-t",
+        &session.name,
+        "-x",
+        &new_cols.to_string(),
+        "-y",
+        &new_lines.to_string(),
     ]);
     thread::sleep(Duration::from_millis(300));
 
