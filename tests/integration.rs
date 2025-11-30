@@ -90,3 +90,31 @@ fn test_hyperlink_insertion() {
         content
     );
 }
+
+#[test]
+fn test_nonexistent_file_no_hyperlink() {
+    let session = TestSession::new();
+    session.send_keys("echo /nonexistent/path/file.rs:42");
+    let content = session.capture_with_escapes();
+
+    assert!(
+        !content.contains("]8;;cursor://file/"),
+        "should NOT hyperlink non-existent files:\n{}",
+        content
+    );
+}
+
+#[test]
+fn test_ansi_colors_preserved() {
+    let session = TestSession::new();
+    // printf with ANSI red color
+    session.send_keys("printf '\\033[31mred text\\033[0m'");
+    let content = session.capture_with_escapes();
+
+    // Check that SGR codes are present (31m for red, 0m for reset)
+    assert!(
+        content.contains("[31m") && content.contains("[0m"),
+        "ANSI color codes should be preserved:\n{}",
+        content
+    );
+}
