@@ -35,7 +35,7 @@ pub struct CompiledRule {
 // Regex to capture file paths, optionally followed by :line_number.
 // Matches paths starting with /, ./, ../, ~, or C:\, or containing at least one / or \.
 // It avoids matching URLs like http://... by requiring path characters.
-const FILE_PATH_REGEX_OPT_LINE: &str = r"\b(?P<path>(?:(?:~|\.|/|[a-zA-Z]:\\)[a-zA-Z0-9._\\/~-]+)|(?:[a-zA-Z0-9._~-]+[\\/][a-zA-Z0-9._\\/~-]+))(?::(?P<line>\d+))?\b";
+const FILE_PATH_REGEX_OPT_LINE: &str = r"(?P<path>(?:(?:~|\.|/|[a-zA-Z]:\\)[a-zA-Z0-9._\\/~-]+)|(?:\b[a-zA-Z0-9._~-]+[\\/][a-zA-Z0-9._\\/~-]+))(?::(?P<line>\d+))?\b";
 
 // Python traceback pattern (optional line)
 const PYTHON_TRACE_REGEX_OPT_LINE: &str = r#"^\s*File "(?P<path>.*?)"(?:, line (?P<line>\d+))?"#;
