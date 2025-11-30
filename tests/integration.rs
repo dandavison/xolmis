@@ -137,3 +137,47 @@ fn test_python_traceback_format() {
         content
     );
 }
+
+#[test]
+fn test_pager_basic() {
+    let session = TestSession::new();
+
+    // Pipe content with a path:line pattern through less
+    session.send_keys("echo 'src/main.rs:10' | less");
+    thread::sleep(Duration::from_millis(300));
+    let content = session.capture_with_escapes();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+    thread::sleep(Duration::from_millis(100));
+
+    // Check that hyperlink was added even through pager
+    assert!(
+        content.contains("]8;;cursor://file/"),
+        "pager output should contain hyperlink:\n{}",
+        content
+    );
+}
+
+#[test]
+fn test_pager_full_screen() {
+    let session = TestSession::new();
+
+    // Generate 30 lines of content with path:line patterns
+    session.send_keys("seq 1 30 | while read n; do echo \"Line $n: src/main.rs:$n\"; done | less");
+    thread::sleep(Duration::from_millis(500));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    // Verify we see content on the screen (less shows ~24 lines in 24-row terminal)
+    // Count how many "Line N:" patterns appear
+    let line_count = content.matches("Line ").count();
+    assert!(
+        line_count >= 20,
+        "expected at least 20 lines visible in pager, got {}:\n{}",
+        line_count,
+        content
+    );
+}
