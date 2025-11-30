@@ -102,17 +102,6 @@ pub fn get_compiled_rules() -> &'static [CompiledRule] {
     &COMPILED_RULES
 }
 
-// List of rules: (name, regex_str, path_group_name, line_group_name)
-// The group names MUST match the named capture groups in the regex strings.
-const RULES: &[(&str, &str, &str, Option<&str>)] = &[
-    // General file paths, line number is optional
-    ("FilePath", FILE_PATH_REGEX_OPT_LINE, "path", Some("line")),
-    // Python tracebacks, line number is optional
-    ("PythonTraceback", PYTHON_TRACE_REGEX_OPT_LINE, "path", Some("line")),
-    // IPDB tracebacks, line number is optional
-    ("IpdbTraceback", IPDB_TRACE_REGEX_OPT_LINE, "path", Some("line")),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,7 +149,7 @@ mod tests {
          assert_eq!(caps.name("line").unwrap().as_str(), "123");
 
          // Invalid path (no / or \) - ensure it doesn't match our stricter path regex
-         assert!(rule.regex.captures("plainfile:10").is_none()); 
+         assert!(rule.regex.captures("plainfile:10").is_none());
          // URL - should not match
          assert!(rule.regex.captures("http://example.com:80").is_none());
          // Path ending in :
@@ -196,4 +185,4 @@ mod tests {
         assert_eq!(caps.name("path").unwrap().as_str(), "/another/script.py");
         assert!(caps.name("line").is_none()); // Check optional group by name
     }
-} 
+}
