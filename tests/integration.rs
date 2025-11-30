@@ -338,6 +338,75 @@ fn test_sustained_load_then_less() {
 }
 
 #[test]
+fn test_delta_ansi_load() {
+    let session = TestSession::new();
+
+    // Run git log through delta - generates lots of ANSI escape sequences
+    // Use delta from PATH, or fall back to homebrew location
+    session.send_keys(
+        "git log -p -20 | delta --no-gitconfig --paging=never 2>/dev/null || \
+         git log -p -20 | /opt/homebrew/bin/delta --no-gitconfig --paging=never",
+    );
+    thread::sleep(Duration::from_millis(3000)); // Wait for delta output
+
+    // Now test that less still works after processing all that ANSI
+    session.send_keys("seq 1 50 | less");
+    thread::sleep(Duration::from_millis(500));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    // Verify less shows content properly after delta load
+    let visible_numbers: Vec<u32> = (1..=30)
+        .filter(|&n| {
+            let pattern = format!("\n{}\n", n);
+            content.contains(&pattern) || content.starts_with(&format!("{}\n", n))
+        })
+        .collect();
+
+    assert!(
+        visible_numbers.len() >= 15,
+        "after delta load, less should show at least 15 numbers, got {:?}:\n{}",
+        visible_numbers,
+        content
+    );
+}
+
+#[test]
+fn test_delta_heavy_then_less() {
+    let session = TestSession::new();
+
+    // Run git log through delta multiple times
+    for _ in 1..=3 {
+        session.send_keys("git log | delta --no-gitconfig --paging=never");
+        thread::sleep(Duration::from_millis(2000));
+    }
+
+    // Test less after heavy delta usage
+    session.send_keys("seq 1 50 | less");
+    thread::sleep(Duration::from_millis(500));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    let visible_numbers: Vec<u32> = (1..=30)
+        .filter(|&n| {
+            let pattern = format!("\n{}\n", n);
+            content.contains(&pattern) || content.starts_with(&format!("{}\n", n))
+        })
+        .collect();
+
+    assert!(
+        visible_numbers.len() >= 15,
+        "after heavy delta, less should show at least 15 numbers, got {:?}:\n{}",
+        visible_numbers,
+        content
+    );
+}
+
+#[test]
 #[ignore = "requires SIGWINCH handling (not yet implemented)"]
 fn test_terminal_resize() {
     let session = TestSession::new();
