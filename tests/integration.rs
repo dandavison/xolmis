@@ -37,7 +37,7 @@ impl TestSession {
 
     fn send_keys(&self, keys: &str) {
         tmux(&["send-keys", "-t", &self.name, keys, "Enter"]);
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(300));
     }
 
     fn capture(&self) -> String {
@@ -115,6 +115,25 @@ fn test_ansi_colors_preserved() {
     assert!(
         content.contains("[31m") && content.contains("[0m"),
         "ANSI color codes should be preserved:\n{}",
+        content
+    );
+}
+
+#[test]
+fn test_python_traceback_format() {
+    let session = TestSession::new();
+    let cwd = std::env::current_dir().unwrap();
+    // Use $'...' syntax for proper escape handling in bash/zsh
+    let cmd = format!(
+        "echo $'  File \"{}/src/main.rs\", line 10'",
+        cwd.display()
+    );
+    session.send_keys(&cmd);
+    let content = session.capture_with_escapes();
+
+    assert!(
+        content.contains("]8;;cursor://file/"),
+        "Python traceback should generate hyperlink:\n{}",
         content
     );
 }
