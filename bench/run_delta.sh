@@ -19,7 +19,7 @@ fi
 sleep 0.3
 
 # Run the workload, then signal completion
-tmux send-keys -t "$SESSION" "for i in \$(seq 1 10); do git log -100 | delta --no-gitconfig --paging=never >/dev/null 2>&1; done; tmux wait-for -S $DONE_SIGNAL; exit" Enter
+tmux send-keys -t "$SESSION" "for i in \$(seq 1 50); do git log -100 | delta --no-gitconfig --paging=never; done; tmux wait-for -S $DONE_SIGNAL; exit" Enter
 
 # Wait for the signal
 tmux wait-for "$DONE_SIGNAL"
