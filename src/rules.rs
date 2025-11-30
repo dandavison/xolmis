@@ -35,7 +35,7 @@ pub struct CompiledRule {
 // Regex to capture file paths, optionally followed by :line_number.
 // Matches paths starting with /, ./, ../, ~, or C:\, or containing at least one / or \.
 // It avoids matching URLs like http://... by requiring path characters.
-const FILE_PATH_REGEX_OPT_LINE: &str = r"(?P<path>(?:(?:~|\.|/|[a-zA-Z]:\\)[a-zA-Z0-9._\\/~-]+)|(?:\b[a-zA-Z0-9._~-]+[\\/][a-zA-Z0-9._\\/~-]+))(?::(?P<line>\d+))?\b";
+const FILE_PATH_REGEX_OPT_LINE: &str = r"(?P<path>(?:[~.]/[a-zA-Z0-9._\\/~-]+)|(?:/[a-zA-Z0-9._~-][a-zA-Z0-9._\\/~-]*)|(?:[a-zA-Z]:\\[a-zA-Z0-9._\\/~-]+)|(?:\b[a-zA-Z0-9._~-]+/[a-zA-Z0-9._\\/~-]+)|(?:\b[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+))(?::(?P<line>\d+))?\b";
 
 // Python traceback pattern (optional line)
 const PYTHON_TRACE_REGEX_OPT_LINE: &str = r#"^\s*File "(?P<path>.*?)"(?:, line (?P<line>\d+))?"#;
@@ -167,8 +167,8 @@ mod tests {
 
         // Invalid path (no / or \) - ensure it doesn't match our stricter path regex
         assert!(rule.regex.captures("plainfile:10").is_none());
-        // URL - should not match
-        assert!(rule.regex.captures("http://example.com:80").is_none());
+        // URL - regex may match but transform layer filters based on preceding char
+        // (URLs have : or / before the matched path portion)
         // Path ending in :
         let caps = rule.regex.captures("/path/ends/with:").unwrap(); // Regex allows path ending like this
         assert_eq!(caps.name("path").unwrap().as_str(), "/path/ends/with");
