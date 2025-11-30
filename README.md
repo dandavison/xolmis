@@ -6,9 +6,6 @@
 
 # xolmis: Terminal Output Transformer
 
-_xolmis was designed and implemented by gemini-2.5-pro-exp-03-25 using Cursor's agent mode, including code comments and
-README (but excluding the [ansi](src/ansi) module)._
-
 
 ## Problem
 
