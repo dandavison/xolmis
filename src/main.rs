@@ -33,24 +33,24 @@
 // 6. Exit Handling: Uses `std::process::exit` for simplicity, although this prevents
 //    clean terminal state restoration (a deferred known issue).
 
-use pty_process::blocking::{Command, Pty, Pts};
+use pty_process::blocking::{Command, Pts, Pty};
 use pty_process::Size;
 use std::env;
-use std::io::{self, Read, Write, IsTerminal};
-use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
-use std::process::{ExitStatus, Child};
 use std::fs::File;
+use std::io::{self, IsTerminal, Read, Write};
+use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
+use std::process::{Child, ExitStatus};
 use std::thread;
 use terminal_size::{terminal_size, Height, Width};
 
 // Import termios functions and flags from nix for terminal control.
 // The `nix` crate provides safe wrappers around low-level Unix APIs.
-use nix::sys::termios::{self, Termios, InputFlags, OutputFlags, LocalFlags, ControlFlags};
+use nix::sys::termios::{self, ControlFlags, InputFlags, LocalFlags, OutputFlags, Termios};
 
 // Declare the modules responsible for transformations, ANSI parsing, and rules.
-mod transform;
 mod ansi;
 mod rules;
+mod transform;
 
 // Imports for streaming UTF-8 decoding.
 use encoding_rs::UTF_8;
@@ -74,7 +74,9 @@ impl<'a> Drop for TermRestore<'a> {
         println!("Restoring terminal settings...");
         // Attempt to restore the original terminal settings using `tcsetattr`.
         // TCSANOW applies the changes immediately.
-        if let Err(e) = termios::tcsetattr(self.fd, termios::SetArg::TCSANOW, &self.original_termios) {
+        if let Err(e) =
+            termios::tcsetattr(self.fd, termios::SetArg::TCSANOW, &self.original_termios)
+        {
             // Report error if restoration fails, but don't panic.
             eprintln!("Failed to restore terminal settings: {}", e);
         }
@@ -105,13 +107,20 @@ fn main() -> io::Result<()> {
 
     // Retrieve the current terminal attributes (settings) for stdin.
     // These include flags controlling input/output processing, echoing, signal handling, etc.
-    let original_termios = termios::tcgetattr(stdin_fd)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to get terminal attributes: {}", e)))?;
+    let original_termios = termios::tcgetattr(stdin_fd).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to get terminal attributes: {}", e),
+        )
+    })?;
 
     // Instantiate the TermRestore struct. It clones the original settings.
     // `_term_restore` going out of scope at the end of `main` triggers its `drop` method
     // (unless `process::exit` is called).
-    let _term_restore = TermRestore { original_termios: original_termios.clone(), fd: stdin_fd };
+    let _term_restore = TermRestore {
+        original_termios: original_termios.clone(),
+        fd: stdin_fd,
+    };
 
     // Clone the settings again to create a modified version for raw mode.
     let mut raw_termios = original_termios.clone();
@@ -129,9 +138,20 @@ fn main() -> io::Result<()> {
     // driver buffers lines and interprets control characters (like arrow keys,
     // backspace, Ctrl+C). This prevents the shell's own line editor (ZLE) and
     // key bindings from working correctly, as it wouldn't receive the raw key events.
-    raw_termios.input_flags &= !(InputFlags::IGNBRK | InputFlags::BRKINT | InputFlags::PARMRK | InputFlags::ISTRIP | InputFlags::INLCR | InputFlags::IGNCR | InputFlags::ICRNL | InputFlags::IXON);
+    raw_termios.input_flags &= !(InputFlags::IGNBRK
+        | InputFlags::BRKINT
+        | InputFlags::PARMRK
+        | InputFlags::ISTRIP
+        | InputFlags::INLCR
+        | InputFlags::IGNCR
+        | InputFlags::ICRNL
+        | InputFlags::IXON);
     raw_termios.output_flags &= !(OutputFlags::OPOST);
-    raw_termios.local_flags &= !(LocalFlags::ECHO | LocalFlags::ECHONL | LocalFlags::ICANON | LocalFlags::ISIG | LocalFlags::IEXTEN);
+    raw_termios.local_flags &= !(LocalFlags::ECHO
+        | LocalFlags::ECHONL
+        | LocalFlags::ICANON
+        | LocalFlags::ISIG
+        | LocalFlags::IEXTEN);
     raw_termios.control_flags &= !(ControlFlags::CSIZE | ControlFlags::PARENB);
     raw_termios.control_flags |= ControlFlags::CS8;
     // `cfmakeraw` is a convenience function in `nix` that sets common raw mode flags.
@@ -142,8 +162,12 @@ fn main() -> io::Result<()> {
 
     // Apply the raw mode settings to the terminal.
     // println!("Applying raw mode terminal settings..."); // Can be noisy
-    termios::tcsetattr(stdin_fd, termios::SetArg::TCSANOW, &raw_termios)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to set raw terminal attributes: {}", e)))?;
+    termios::tcsetattr(stdin_fd, termios::SetArg::TCSANOW, &raw_termios).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to set raw terminal attributes: {}", e),
+        )
+    })?;
 
     // Get the initial size (rows, columns) of the real terminal.
     // This is crucial for setting the corresponding size of the PTY.
@@ -151,7 +175,7 @@ fn main() -> io::Result<()> {
 
     // Determine the user's default shell.
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string()); // Using specific shell for now
-    // println!("Starting xolmis: Spawning '{}' in a PTY...", shell); // Can be noisy
+                                                                              // println!("Starting xolmis: Spawning '{}' in a PTY...", shell); // Can be noisy
 
     // Prepare the command to run the user's shell.
     let cmd = Command::new(&shell);
@@ -173,8 +197,9 @@ fn main() -> io::Result<()> {
         let pty_size = Size::new(rows, cols);
         // The `resize` method borrows `pty` mutably here, which is allowed even if
         // the `pty` binding isn't `mut`.
-        pty.resize(pty_size)
-           .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to resize PTY: {}", e)))?;
+        pty.resize(pty_size).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("Failed to resize PTY: {}", e))
+        })?;
     } else {
         eprintln!("Warning: Could not get terminal size. PTY might have incorrect dimensions.");
     }
@@ -184,8 +209,12 @@ fn main() -> io::Result<()> {
     // Spawn the user's shell as a child process.
     // Critically, the shell is attached to the PTY slave end (`pts`).
     // `cmd.spawn()` takes ownership of `pts`.
-    let mut child: Child = cmd.spawn(pts)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to spawn process: {}", e)))?;
+    let mut child: Child = cmd.spawn(pts).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to spawn process: {}", e),
+        )
+    })?;
 
     // println!("PTY spawned successfully."); // Can be noisy
 
@@ -216,7 +245,7 @@ fn main() -> io::Result<()> {
     // Clone the current working directory for the output thread.
     let thread_cwd = cwd.clone();
 
-    // --- Output Thread --- 
+    // --- Output Thread ---
     // Reads output from the shell (via PTY master), decodes UTF-8, transforms it,
     // and writes to real stdout.
     let output_thread = thread::spawn(move || {
@@ -260,8 +289,11 @@ fn main() -> io::Result<()> {
                             let _ = stdout.flush();
                         }
                         Err(e) => {
-                             // Log if unexpected UTF-8 error occurs after decoding.
-                             eprintln!("UTF-8 conversion error after decode: {}. Skipping chunk.", e);
+                            // Log if unexpected UTF-8 error occurs after decoding.
+                            eprintln!(
+                                "UTF-8 conversion error after decode: {}. Skipping chunk.",
+                                e
+                            );
                         }
                     }
                 }
@@ -310,7 +342,7 @@ fn main() -> io::Result<()> {
                     // Handle other stdin read errors.
                     eprintln!("Error reading from stdin: {}", e);
                     break;
-                 }
+                }
             }
         }
     });
@@ -329,7 +361,10 @@ fn main() -> io::Result<()> {
             eprintln!("Failed to wait for child process: {}", e);
             // If waiting fails, return an error. This would trigger terminal restore
             // if main returned Result, but `process::exit` bypasses it.
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to wait for child"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to wait for child",
+            ));
         }
     };
 
@@ -340,7 +375,7 @@ fn main() -> io::Result<()> {
     output_thread.join().expect("Output thread panicked");
     input_thread.join().expect("Input thread panicked");
 
-    // --- Exit --- 
+    // --- Exit ---
     println!("xolmis finished.");
     // Use immediate exit via std::process::exit.
     // Letting `main` return naturally caused hangs because `input_thread.join()`

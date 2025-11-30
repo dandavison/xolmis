@@ -282,7 +282,6 @@ mod tests {
 
     use super::{AnsiElementIterator, Element};
 
-
     #[test]
     fn test_iterator_1() {
         let minus_line = "\x1b[31m0123\x1b[m\n";

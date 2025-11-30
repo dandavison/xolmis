@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
 // Use the updated types from the rules module
-use crate::rules::{CompiledRule, get_compiled_rules};
+use crate::rules::{get_compiled_rules, CompiledRule};
 
-use crate::ansi::{strip_ansi_codes, ansi_preserving_index};
 use crate::ansi::iterator::{AnsiElementIterator, Element};
+use crate::ansi::{ansi_preserving_index, strip_ansi_codes};
 
 #[derive(Debug)]
 struct MatchInfo<'a> {
@@ -76,25 +76,26 @@ pub fn transform(original_chunk: &str, cwd: &Path) -> String {
             continue; // Skip invalid/overlapping indices
         }
 
-        // --- If we reach here, the match is valid and should be linked --- 
+        // --- If we reach here, the match is valid and should be linked ---
 
         let mut link_slice_start = original_start;
 
         // Check for leading newline case
-        if original_start < original_chunk.len() &&
-           original_bytes[original_start] == b'\n' &&
-           m.stripped_text.starts_with(|c: char| c.is_whitespace())
+        if original_start < original_chunk.len()
+            && original_bytes[original_start] == b'\n'
+            && m.stripped_text.starts_with(|c: char| c.is_whitespace())
         {
             // Append preceding text *including* the newline
-            output.push_str(&original_chunk[last_appended_original_byte_end ..= original_start]);
+            output.push_str(&original_chunk[last_appended_original_byte_end..=original_start]);
             // Start the link slice *after* the newline
-            if original_start + 1 <= original_end { // Avoid panic if end is newline too
+            if original_start + 1 <= original_end {
+                // Avoid panic if end is newline too
                 link_slice_start = original_start + 1;
             }
             // If start+1 > end, the slice will be empty, which is handled below
         } else {
             // Append preceding text *excluding* the start offset
-            output.push_str(&original_chunk[last_appended_original_byte_end .. original_start]);
+            output.push_str(&original_chunk[last_appended_original_byte_end..original_start]);
             // Start link slice at the original start (no change needed)
         }
 
@@ -103,14 +104,14 @@ pub fn transform(original_chunk: &str, cwd: &Path) -> String {
         // Use link_slice_start which might be adjusted past a leading newline
         // Ensure start <= end before slicing
         if link_slice_start <= original_end {
-             let original_text_slice = &original_chunk[link_slice_start..original_end];
+            let original_text_slice = &original_chunk[link_slice_start..original_end];
 
-             // Format and append hyperlink using the original text slice
-             let link_url = format_cursor_hyperlink(&full_path, m.line);
-             let hyperlinked_text = format_osc8_hyperlink(&link_url, original_text_slice);
-             output.push_str(&hyperlinked_text);
+            // Format and append hyperlink using the original text slice
+            let link_url = format_cursor_hyperlink(&full_path, m.line);
+            let hyperlinked_text = format_osc8_hyperlink(&link_url, original_text_slice);
+            output.push_str(&hyperlinked_text);
         } else {
-             // Slice would be invalid (start > end), append nothing for the link part
+            // Slice would be invalid (start > end), append nothing for the link part
         }
 
         // Update state after successful processing
@@ -124,7 +125,11 @@ pub fn transform(original_chunk: &str, cwd: &Path) -> String {
 }
 
 // Helper to find original byte indices based on stripped indices
-fn find_original_indices(original_text: &str, stripped_start: usize, stripped_end: usize) -> Option<(usize, usize)> {
+fn find_original_indices(
+    original_text: &str,
+    stripped_start: usize,
+    stripped_end: usize,
+) -> Option<(usize, usize)> {
     let original_start_byte = ansi_preserving_index(original_text, stripped_start)?;
 
     let stripped_len = stripped_end - stripped_start;
@@ -157,7 +162,7 @@ fn find_original_indices(original_text: &str, stripped_start: usize, stripped_en
                     Element::Osc(_, end) => end,
                     Element::Text(_, _) => unreachable!(), // Handled above
                 };
-                 text_content_end_byte = original_start_byte + element_end;
+                text_content_end_byte = original_start_byte + element_end;
             }
         }
     }
@@ -173,10 +178,10 @@ fn find_original_indices(original_text: &str, stripped_start: usize, stripped_en
         for element in AnsiElementIterator::new(&original_text[text_content_end_byte..]) {
             match element {
                 Element::Text(_, _) => break, // Stop at the next text element
-                Element::Sgr(_, _, end) |
-                Element::Csi(_, end) |
-                Element::Esc(_, end) |
-                Element::Osc(_, end) => {
+                Element::Sgr(_, _, end)
+                | Element::Csi(_, end)
+                | Element::Esc(_, end)
+                | Element::Osc(_, end) => {
                     // Update final end byte to include this ANSI code
                     final_end_byte = text_content_end_byte + end;
                 }
@@ -233,17 +238,22 @@ fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
 // Creates a hyperlink target URL (using custom cursor:// scheme for potential editor integration)
 fn format_cursor_hyperlink(absolute_path: &Path, line: u32) -> String {
     // Attempt to get a canonical path, fall back to the resolved absolute path
-    let canonical_path = absolute_path.canonicalize().unwrap_or_else(|_| absolute_path.to_path_buf());
+    let canonical_path = absolute_path
+        .canonicalize()
+        .unwrap_or_else(|_| absolute_path.to_path_buf());
     // Use to_string_lossy to handle potential non-UTF8 paths gracefully
-    format!("cursor://file/{}:{}", canonical_path.to_string_lossy(), line)
+    format!(
+        "cursor://file/{}:{}",
+        canonical_path.to_string_lossy(),
+        line
+    )
 }
 
 // Formats the text with OSC 8 terminal hyperlinks
 fn format_osc8_hyperlink(url: &str, text: &str) -> String {
     format!(
         "]8;;{}\\{}]8;;\\", // Use double backslash for escape sequence in format!
-        url,
-        text
+        url, text
     )
 }
 
@@ -256,7 +266,10 @@ mod tests {
     // Helper to get the absolute path of a file relative to the crate root
     fn get_crate_abs_path(relative_path: &str) -> PathBuf {
         let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        PathBuf::from(manifest_dir).join(relative_path).canonicalize().unwrap()
+        PathBuf::from(manifest_dir)
+            .join(relative_path)
+            .canonicalize()
+            .unwrap()
     }
 
     // Helper to create the expected cursor:// link format
@@ -309,7 +322,7 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-     #[test]
+    #[test]
     fn test_ipdb_traceback() {
         // Test with absolute path
         let abs_path = get_crate_abs_path("Cargo.toml");
@@ -362,7 +375,7 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-     #[test]
+    #[test]
     fn test_relative_paths() {
         // Assumes src/main.rs exists
         let input = "Check src/main.rs:1 for setup.";
@@ -420,8 +433,7 @@ mod tests {
             expected_linked_segment
         );
         assert_eq!(
-            actual,
-            expected,
+            actual, expected,
             "Test expects hyperlink around 'File..., line...' segment, including internal ANSI"
         );
 
