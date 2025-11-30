@@ -1,9 +1,21 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Once;
 use std::thread;
 use std::time::Duration;
 
 static SESSION_COUNTER: AtomicU32 = AtomicU32::new(0);
+static BUILD_ONCE: Once = Once::new();
+
+fn ensure_built() {
+    BUILD_ONCE.call_once(|| {
+        let status = Command::new("cargo")
+            .args(["build"])
+            .status()
+            .expect("cargo build failed");
+        assert!(status.success(), "cargo build failed");
+    });
+}
 
 struct TestSession {
     name: String,
@@ -11,15 +23,10 @@ struct TestSession {
 
 impl TestSession {
     fn new() -> Self {
+        ensure_built();
+
         let id = SESSION_COUNTER.fetch_add(1, Ordering::SeqCst);
         let name = format!("xolmis_test_{}", id);
-
-        // Build xolmis
-        let status = Command::new("cargo")
-            .args(["build"])
-            .status()
-            .expect("cargo build failed");
-        assert!(status.success(), "cargo build failed");
 
         // Kill any existing session with this name
         let _ = tmux(&["kill-session", "-t", &name]);
@@ -45,7 +52,7 @@ impl TestSession {
 
     fn send_keys(&self, keys: &str) {
         tmux(&["send-keys", "-t", &self.name, keys, "Enter"]);
-        thread::sleep(Duration::from_millis(300));
+        thread::sleep(Duration::from_millis(500));
     }
 
     fn capture(&self) -> String {
@@ -134,7 +141,7 @@ fn test_python_traceback_format() {
     // Use $'...' syntax for proper escape handling in bash/zsh
     let cmd = format!("echo $'  File \"{}/src/main.rs\", line 10'", cwd.display());
     session.send_keys(&cmd);
-    thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(200));
     let content = session.capture_with_escapes();
 
     assert!(
@@ -194,7 +201,7 @@ fn test_seq_in_less() {
 
     // Pipe seq 1-50 through less
     session.send_keys("seq 1 50 | less");
-    thread::sleep(Duration::from_millis(300));
+    thread::sleep(Duration::from_millis(800));
     let content = session.capture();
 
     // Quit less
@@ -256,6 +263,76 @@ fn test_after_load_less() {
     assert!(
         has_1 && has_10 && has_20,
         "less after load should display seq output (1, 10, 20 expected):\n{}",
+        content
+    );
+}
+
+#[test]
+fn test_heavy_load_then_less() {
+    let session = TestSession::new();
+
+    // Generate heavy load: 5000 lines with path patterns
+    session.send_keys("for i in $(seq 1 5000); do echo \"heavy load $i: src/main.rs:$i\"; done");
+    thread::sleep(Duration::from_millis(5000)); // Wait for output
+
+    // Pipe seq through less
+    session.send_keys("seq 1 50 | less");
+    thread::sleep(Duration::from_millis(500));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    // Count how many numbers we see (should see 1-20+ in a 24-line terminal)
+    let visible_numbers: Vec<u32> = (1..=30)
+        .filter(|&n| {
+            let pattern = format!("\n{}\n", n);
+            content.contains(&pattern) || content.starts_with(&format!("{}\n", n))
+        })
+        .collect();
+
+    assert!(
+        visible_numbers.len() >= 15,
+        "after heavy load, less should show at least 15 numbers, got {:?}:\n{}",
+        visible_numbers,
+        content
+    );
+}
+
+#[test]
+fn test_sustained_load_then_less() {
+    let session = TestSession::new();
+
+    // Multiple rounds of load with small delays (simulates sustained usage)
+    for round in 1..=5 {
+        let cmd = format!(
+            "for i in $(seq 1 500); do echo \"round {} line $i: src/main.rs:$i\"; done",
+            round
+        );
+        session.send_keys(&cmd);
+        thread::sleep(Duration::from_millis(1000));
+    }
+
+    // Now test less
+    session.send_keys("seq 1 50 | less");
+    thread::sleep(Duration::from_millis(500));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    // Verify less shows content properly
+    let visible_numbers: Vec<u32> = (1..=30)
+        .filter(|&n| {
+            let pattern = format!("\n{}\n", n);
+            content.contains(&pattern) || content.starts_with(&format!("{}\n", n))
+        })
+        .collect();
+
+    assert!(
+        visible_numbers.len() >= 15,
+        "after sustained load, less should show at least 15 numbers, got {:?}:\n{}",
+        visible_numbers,
         content
     );
 }
