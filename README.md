@@ -23,6 +23,158 @@ xolmis acts as a wrapper around your interactive shell, intercepting its input a
 4.  **Transformation Module:** The specific rules for pattern matching and hyperlink generation reside in the `src/transform.rs` module.
 5.  **ANSI Awareness:** The transformation logic uses an ANSI parser (logic derived from the `delta` tool) to iterate through text segments and ANSI escape codes separately. This allows hyperlinks to be inserted around text *without* breaking existing formatting like colors.
 
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              TERMINAL EMULATOR (iTerm2, WezTerm, etc.)              │
+│                                                                                     │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│   │                              USER'S VIEW                                    │   │
+│   │                                                                             │   │
+│   │   $ grep -n TODO src/*.rs                                                   │   │
+│   │   src/main.rs:42:    // TODO: handle resize                                 │   │
+│   │                ▲                                                            │   │
+│   │                └── clickable hyperlink! (cursor://file/...src/main.rs:42)   │   │
+│   │                                                                             │   │
+│   └─────────────────────────────────────────────────────────────────────────────┘   │
+│                                       ▲                                             │
+│                    transformed output │                                             │
+│                    (with OSC 8 links) │                                             │
+└───────────────────────────────────────┼─────────────────────────────────────────────┘
+                                        │
+┌───────────────────────────────────────┴─────────────────────────────────────────────┐
+│                                    XOLMIS                                           │
+│                                                                                     │
+│   ┌─────────────┐                                     ┌─────────────────────────┐   │
+│   │ REAL STDIN  │                                     │      REAL STDOUT        │   │
+│   │ (raw mode)  │                                     │                         │   │
+│   └──────┬──────┘                                     └────────────▲────────────┘   │
+│          │                                                         │                │
+│          │ keystrokes                              transformed text│                │
+│          │                                                         │                │
+│   ┌──────▼──────────────────────────────────────────────────────────────────────┐   │
+│   │                          MAIN THREAD                                        │   │
+│   │                                                                             │   │
+│   │  • Sets terminal to RAW MODE (disable echo, buffering, signals)             │   │
+│   │  • Creates PTY master/slave pair                                            │   │
+│   │  • Spawns child shell attached to PTY slave                                 │   │
+│   │  • Waits for child process to exit                                          │   │
+│   │                                                                             │   │
+│   └──────┬─────────────────────────────────────────────────────────┬────────────┘   │
+│          │                                                         │                │
+│   ┌──────▼──────┐                                       ┌──────────┴────────────┐   │
+│   │INPUT THREAD │                                       │    OUTPUT THREAD      │   │
+│   │             │                                       │                       │   │
+│   │ Read stdin  │                                       │  ┌─────────────────┐  │   │
+│   │      │      │                                       │  │ UTF-8 Decoder   │  │   │
+│   │      ▼      │                                       │  │ (streaming)     │  │   │
+│   │ Write to    │                                       │  └────────┬────────┘  │   │
+│   │ PTY master  │                                       │           ▼           │   │
+│   │             │                                       │  ┌─────────────────┐  │   │
+│   └──────┬──────┘                                       │  │   TRANSFORM     │  │   │
+│          │                                              │  │                 │  │   │
+│          │                                              │  │ Strip ANSI ───┐ │  │   │
+│          │                                              │  │               │ │  │   │
+│          │                                              │  │ Match regex ◄─┘ │  │   │
+│          │                                              │  │ (path:line)     │  │   │
+│          │                                              │  │               │ │  │   │
+│          │                                              │  │ Check file    │ │  │   │
+│          │                                              │  │ exists ◄──────┘ │  │   │
+│          │                                              │  │               │ │  │   │
+│          │                                              │  │ Inject OSC 8◄─┘ │  │   │
+│          │                                              │  │ hyperlinks      │  │   │
+│          │                                              │  │               │ │  │   │
+│          │                                              │  │ Restore ANSI◄─┘ │  │   │
+│          │                                              │  │ formatting      │  │   │
+│          │                                              │  └────────┬────────┘  │   │
+│          │                                              │           │           │   │
+│          │                                              │  Write to stdout      │   │
+│          │                                              └───────────────────────┘   │
+│          │                                                         ▲                │
+│          │                                                         │                │
+│   ┌──────▼─────────────────────────────────────────────────────────┴────────────┐   │
+│   │                              PTY MASTER                                     │   │
+│   └─────────────────────────────────┬───────────────────────────────────────────┘   │
+│                                     │                                               │
+└─────────────────────────────────────┼───────────────────────────────────────────────┘
+                                      │
+┌─────────────────────────────────────▼───────────────────────────────────────────────┐
+│                                 PTY SLAVE                                           │
+│                          (connected to shell's stdin/stdout/stderr)                 │
+│                                                                                     │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│   │                        CHILD SHELL (zsh, bash, etc.)                        │   │
+│   │                                                                             │   │
+│   │   • Runs interactively with line editing (ZLE/readline)                     │   │
+│   │   • Executes commands (grep, cargo, python, etc.)                           │   │
+│   │   • Produces output with paths like "src/main.rs:42"                        │   │
+│   │                                                                             │   │
+│   └─────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                               ┌─────────────────────────────┐
+                               │       TRANSFORMATION        │
+                               │         PIPELINE            │
+                               └──────────────┬──────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  INPUT: "\x1b[31msrc/main.rs:42\x1b[0m: TODO"                                       │
+│                                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐    │
+│  │ 1. ANSI PARSING (src/ansi/)                                                 │    │
+│  │    AnsiElementIterator parses stream into:                                  │    │
+│  │    [Sgr(Red), Text("src/main.rs:42"), Sgr(Reset), Text(": TODO")]           │    │
+│  │                                                                             │    │
+│  │ 2. STRIP FOR MATCHING                                                       │    │
+│  │    Stripped text: "src/main.rs:42: TODO"                                    │    │
+│  │                                                                             │    │
+│  │ 3. REGEX MATCHING (src/rules.rs)                                            │    │
+│  │    Rules: FilePath, PythonTraceback, IpdbTraceback                          │    │
+│  │    Match: "src/main.rs:42" → path="src/main.rs", line=42                    │    │
+│  │                                                                             │    │
+│  │ 4. PATH VALIDATION                                                          │    │
+│  │    Resolve: cwd + "src/main.rs" → /full/path/src/main.rs                    │    │
+│  │    Check: file exists? ✓                                                    │    │
+│  │                                                                             │    │
+│  │ 5. HYPERLINK INJECTION                                                      │    │
+│  │    URL: cursor://file//full/path/src/main.rs:42                             │    │
+│  │    OSC 8: \x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\                           │    │
+│  │                                                                             │    │
+│  │ 6. ANSI PRESERVATION                                                        │    │
+│  │    Re-inject original ANSI codes around the hyperlink                       │    │
+│  └─────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                     │
+│  OUTPUT: "\x1b[31m\x1b]8;;cursor://file//.../main.rs:42\x1b\\src/main.rs:42"        │
+│          "\x1b]8;;\x1b\\\x1b[0m: TODO"                                              │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                               ┌─────────────────────────────┐
+                               │       MODULE STRUCTURE      │
+                               └──────────────┬──────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  src/                                                                               │
+│  ├── main.rs          PTY creation, raw mode, I/O threads, process management       │
+│  ├── transform.rs     Core transformation: match finding, hyperlink generation      │
+│  ├── rules.rs         Regex patterns: FilePath, PythonTraceback, IpdbTraceback      │
+│  └── ansi/                                                                          │
+│      ├── mod.rs       ANSI utilities: strip_ansi_codes, ansi_preserving_index       │
+│      └── iterator.rs  AnsiElementIterator: state-machine ANSI parser                │
+│                                                                                     │
+│  Key Dependencies:                                                                  │
+│  • pty-process     - PTY creation and process spawning                              │
+│  • nix             - Terminal control (raw mode via termios)                        │
+│  • encoding_rs     - Streaming UTF-8 decoding                                       │
+│  • regex           - Pattern matching for file paths                                │
+│  • anstyle-parse   - Low-level ANSI escape sequence parsing                         │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Current State & Known Issues
 
 *   **Functionality:** Wraps a shell, handles raw mode, performs basic `path:line` hyperlinking using OSC 8 sequences compatible with many modern terminals (like WezTerm, iTerm2, Alacritty). Correctly handles UTF-8 decoding and preserves ANSI colors during transformation.
@@ -57,4 +209,4 @@ if [ -z "$XOLMIS" ]; then
     exec /PATH/TO/xolmis
 fi
 ```
-(Note: While the terminal restoration issue mainly affects running `xolmis` as a child process during development, the unsafe file descriptor handling issue should ideally be addressed for robust `exec` integration). 
+(Note: While the terminal restoration issue mainly affects running `xolmis` as a child process during development, the unsafe file descriptor handling issue should ideally be addressed for robust `exec` integration).
