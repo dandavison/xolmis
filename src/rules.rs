@@ -42,7 +42,7 @@ const FILE_PATH_REGEX_OPT_LINE: &str = r"\b(?P<path>(?:(?:~|\.|/|[a-zA-Z]:\\)[a-
 const PYTHON_TRACE_REGEX_OPT_LINE: &str = r#"^\s*File "(?P<path>.*?)"(?:, line (?P<line>\d+))?"#;
 
 // IPDB traceback pattern (optional line)
-const IPDB_TRACE_REGEX_OPT_LINE: &str = r"^>\s*(?P<path>.*?)(?:\((?P<line>\d+)\))?"#;
+const IPDB_TRACE_REGEX_OPT_LINE: &str = r"^>\s*(?P<path>[^(]+)(?:\((?P<line>\d+)\))?";
 
 // Define the raw rule data as a const array
 const RULES_DATA: &[RuleData] = &[

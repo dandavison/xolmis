@@ -199,8 +199,9 @@ fn collect_matches<'a>(
     matches: &mut Vec<MatchInfo<'a>>,
 ) {
     for caps in rule.regex.captures_iter(stripped_text_segment) {
+        let line_match = rule.line_group_index.and_then(|idx| caps.get(idx));
         if let (Some(match_obj), Some(path_match), Some(line_num_match)) =
-            (caps.get(0), caps.get(rule.path_group_index), caps.get(rule.line_group_index))
+            (caps.get(0), caps.get(rule.path_group_index), line_match)
         {
             if let Ok(line_num) = line_num_match.as_str().parse::<u32>() {
                 if !path_match.as_str().is_empty() {
