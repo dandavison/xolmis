@@ -189,6 +189,78 @@ fn test_pager_full_screen() {
 }
 
 #[test]
+fn test_seq_in_less() {
+    let session = TestSession::new();
+
+    // Pipe seq 1-50 through less
+    session.send_keys("seq 1 50 | less");
+    thread::sleep(Duration::from_millis(300));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    // In a 24-line terminal, less should show lines 1-23ish
+    // Verify we see sequential numbers
+    let has_1 = content.contains("\n1\n") || content.starts_with("1\n");
+    let has_10 = content.contains("\n10\n");
+    let has_20 = content.contains("\n20\n");
+
+    assert!(
+        has_1 && has_10 && has_20,
+        "less should display seq output (1, 10, 20 expected):\n{}",
+        content
+    );
+}
+
+#[test]
+fn test_after_load_echo() {
+    let session = TestSession::new();
+
+    // Generate significant load: 1000 lines of output with path patterns
+    session.send_keys("for i in $(seq 1 1000); do echo \"load line $i: src/main.rs:$i\"; done");
+    thread::sleep(Duration::from_millis(2000)); // Wait for all output
+
+    // Now do a simple echo
+    session.send_keys("echo AFTER_LOAD_MARKER_12345");
+    let content = session.capture();
+
+    assert!(
+        content.contains("AFTER_LOAD_MARKER_12345"),
+        "echo after load should work:\n{}",
+        content
+    );
+}
+
+#[test]
+fn test_after_load_less() {
+    let session = TestSession::new();
+
+    // Generate significant load: 1000 lines of output with path patterns
+    session.send_keys("for i in $(seq 1 1000); do echo \"load line $i: src/main.rs:$i\"; done");
+    thread::sleep(Duration::from_millis(2000)); // Wait for all output
+
+    // Now pipe seq through less
+    session.send_keys("seq 1 50 | less");
+    thread::sleep(Duration::from_millis(500));
+    let content = session.capture();
+
+    // Quit less
+    tmux(&["send-keys", "-t", &session.name, "q"]);
+
+    // Verify less shows content properly after load
+    let has_1 = content.contains("\n1\n") || content.starts_with("1\n");
+    let has_10 = content.contains("\n10\n");
+    let has_20 = content.contains("\n20\n");
+
+    assert!(
+        has_1 && has_10 && has_20,
+        "less after load should display seq output (1, 10, 20 expected):\n{}",
+        content
+    );
+}
+
+#[test]
 #[ignore = "requires SIGWINCH handling (not yet implemented)"]
 fn test_terminal_resize() {
     let session = TestSession::new();
