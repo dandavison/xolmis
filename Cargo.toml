@@ -22,6 +22,8 @@ unicode-width = "0.1"
 encoding_rs = "0.8"
 encoding_rs_io = "0.1"
 lazy_static = "1.4.0"
+signal-hook = "0.3"
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.0"

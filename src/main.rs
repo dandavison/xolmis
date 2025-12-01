@@ -40,8 +40,14 @@ use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::process::{Child, ExitStatus};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use terminal_size::{terminal_size, Height, Width};
+
+// For SIGWINCH handling
+use signal_hook::consts::SIGWINCH;
+use signal_hook::iterator::Signals;
 
 // Import termios functions and flags from nix for terminal control.
 // The `nix` crate provides safe wrappers around low-level Unix APIs.
@@ -203,7 +209,6 @@ fn main() -> io::Result<()> {
     } else {
         eprintln!("Warning: Could not get terminal size. PTY might have incorrect dimensions.");
     }
-    // Note: Handling terminal resize *while running* (SIGWINCH signal) is not yet implemented.
     // --- End PTY size setup ---
 
     // Spawn the user's shell as a child process.
@@ -241,6 +246,40 @@ fn main() -> io::Result<()> {
     // The original `pty` object is now effectively just holding the FD open until the
     // unsafe `File` handles are done. It's not used directly after this.
     // --- End File Descriptor Handling ---
+
+    // --- SIGWINCH Handler Thread ---
+    // Handle terminal resize signals by propagating the new size to the PTY.
+    let should_exit = Arc::new(AtomicBool::new(false));
+    let should_exit_clone = should_exit.clone();
+
+    let sigwinch_thread = thread::spawn(move || {
+        let mut signals = match Signals::new([SIGWINCH]) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to register SIGWINCH handler: {}", e);
+                return;
+            }
+        };
+
+        for _ in signals.forever() {
+            if should_exit_clone.load(Ordering::Relaxed) {
+                break;
+            }
+            // Get new terminal size and propagate to PTY
+            if let Some((Width(cols), Height(rows))) = terminal_size() {
+                let winsize = libc::winsize {
+                    ws_row: rows,
+                    ws_col: cols,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                };
+                unsafe {
+                    libc::ioctl(pty_fd, libc::TIOCSWINSZ, &winsize);
+                }
+            }
+        }
+    });
+    // --- End SIGWINCH Handler Thread ---
 
     // Clone the current working directory for the output thread.
     let thread_cwd = cwd.clone();
@@ -367,6 +406,14 @@ fn main() -> io::Result<()> {
             ));
         }
     };
+
+    // Signal the SIGWINCH thread to exit
+    should_exit.store(true, Ordering::Relaxed);
+    // Send ourselves a SIGWINCH to unblock the signal iterator
+    unsafe {
+        libc::raise(libc::SIGWINCH);
+    }
+    let _ = sigwinch_thread.join();
 
     // Wait for output_thread to finish (it will EOF when child exits).
     // Don't wait for input_thread - it blocks on stdin.read() which won't EOF

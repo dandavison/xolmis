@@ -353,6 +353,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7664a098b8e616bdfcc2dc0e9ac44eb231eedf41db4e9fe95d8d32ec728dedad"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -591,10 +610,12 @@ dependencies = [
  "encoding_rs_io",
  "itertools",
  "lazy_static",
+ "libc",
  "nix",
  "predicates",
  "pty-process",
  "regex",
+ "signal-hook",
  "terminal_size",
  "unicode-segmentation",
  "unicode-width 0.1.14",

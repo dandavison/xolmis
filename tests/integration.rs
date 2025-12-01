@@ -407,7 +407,6 @@ fn test_delta_heavy_then_less() {
 }
 
 #[test]
-#[ignore = "requires SIGWINCH handling (not yet implemented)"]
 fn test_terminal_resize() {
     let session = TestSession::new();
 
@@ -420,11 +419,11 @@ fn test_terminal_resize() {
     let lines: Vec<&str> = content_before.lines().collect();
     let initial_cols: Option<u32> = lines.iter().filter_map(|l| l.trim().parse().ok()).next();
 
-    // Resize the tmux pane to a different size
+    // Resize the tmux window (resize-window works better than resize-pane for detached sessions)
     let new_cols = initial_cols.unwrap_or(80) + 20;
     let new_lines = 30;
     tmux(&[
-        "resize-pane",
+        "resize-window",
         "-t",
         &session.name,
         "-x",
