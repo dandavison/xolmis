@@ -79,6 +79,11 @@ fn tmux(args: &[&str]) -> std::process::Output {
         .expect("tmux command failed")
 }
 
+fn tmux_capture(target: &str) -> String {
+    let output = tmux(&["capture-pane", "-t", target, "-p"]);
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
 #[test]
 fn test_hello_world() {
     let session = TestSession::new();
@@ -406,8 +411,9 @@ fn test_delta_heavy_then_less() {
     );
 }
 
+/// Test terminal resize via tmux resize-window
 #[test]
-fn test_terminal_resize() {
+fn test_terminal_resize_window() {
     let session = TestSession::new();
 
     // Get initial size
@@ -419,7 +425,7 @@ fn test_terminal_resize() {
     let lines: Vec<&str> = content_before.lines().collect();
     let initial_cols: Option<u32> = lines.iter().filter_map(|l| l.trim().parse().ok()).next();
 
-    // Resize the tmux window (resize-window works better than resize-pane for detached sessions)
+    // Resize the tmux window
     let new_cols = initial_cols.unwrap_or(80) + 20;
     let new_lines = 30;
     tmux(&[
@@ -438,13 +444,81 @@ fn test_terminal_resize() {
     thread::sleep(Duration::from_millis(100));
     let content_after = session.capture();
 
-    // After resize, PTY should report new size
-    // This requires SIGWINCH handling which is not yet implemented
     let expected = format!("AFTER_RESIZE: {}x{}", new_cols, new_lines);
     assert!(
         content_after.contains(&expected),
-        "terminal resize not propagated to PTY (SIGWINCH handling needed).\nExpected: {}\nGot:\n{}",
+        "resize-window not propagated to PTY.\nExpected: {}\nGot:\n{}",
         expected,
         content_after
+    );
+}
+
+/// Test terminal resize via tmux resize-pane (requires split panes)
+#[test]
+fn test_terminal_resize_pane() {
+    let session = TestSession::new();
+
+    // Make the window large first
+    tmux(&[
+        "resize-window",
+        "-t",
+        &session.name,
+        "-x",
+        "200",
+        "-y",
+        "50",
+    ]);
+    thread::sleep(Duration::from_millis(200));
+
+    // Split the window horizontally - creates a second pane, allowing resize-pane to work
+    // Note: split-window makes the new pane active, so we must explicitly target pane 0
+    tmux(&["split-window", "-t", &session.name, "-h"]);
+    thread::sleep(Duration::from_millis(200));
+
+    // Target pane 0 (the xolmis pane) explicitly
+    let pane_target = format!("{}:0.0", session.name);
+
+    // Get initial size
+    tmux(&["send-keys", "-t", &pane_target, "tput cols", "Enter"]);
+    thread::sleep(Duration::from_millis(300));
+    let content1 = tmux_capture(&pane_target);
+
+    // Parse initial cols
+    let initial_cols: u32 = content1
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .next()
+        .unwrap_or(0);
+
+    // Resize pane 0 - make it larger
+    let new_cols: u32 = 120;
+    tmux(&[
+        "resize-pane",
+        "-t",
+        &pane_target,
+        "-x",
+        &new_cols.to_string(),
+    ]);
+    thread::sleep(Duration::from_millis(300));
+
+    // Check size after pane resize
+    tmux(&["send-keys", "-t", &pane_target, "tput cols", "Enter"]);
+    thread::sleep(Duration::from_millis(300));
+    let content2 = tmux_capture(&pane_target);
+
+    // Parse new cols (get the last number - most recent tput output)
+    let final_cols: u32 = content2
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .last()
+        .unwrap_or(0);
+
+    assert!(
+        final_cols == new_cols,
+        "resize-pane not propagated to PTY.\nExpected: {} cols\nInitial: {} cols\nFinal: {} cols\nContent:\n{}",
+        new_cols,
+        initial_cols,
+        final_cols,
+        content2
     );
 }
