@@ -75,15 +75,11 @@ struct TermRestore<'a> {
 // The Drop trait defines cleanup logic that runs when a value goes out of scope.
 impl<'a> Drop for TermRestore<'a> {
     fn drop(&mut self) {
-        // This message indicates the drop is happening, but might interfere with
-        // the terminal state if printed while still in raw mode.
-        println!("Restoring terminal settings...");
-        // Attempt to restore the original terminal settings using `tcsetattr`.
+        // Restore the original terminal settings using `tcsetattr`.
         // TCSANOW applies the changes immediately.
         if let Err(e) =
             termios::tcsetattr(self.fd, termios::SetArg::TCSANOW, &self.original_termios)
         {
-            // Report error if restoration fails, but don't panic.
             eprintln!("Failed to restore terminal settings: {}", e);
         }
     }
@@ -391,11 +387,7 @@ fn main() -> io::Result<()> {
     // Wait for the child shell process to terminate.
     // This blocks the main thread.
     let status: ExitStatus = match child.wait() {
-        Ok(status) => {
-            // Log the exit status.
-            println!("\nShell process exited with status: {}", status);
-            status
-        }
+        Ok(status) => status,
         Err(e) => {
             eprintln!("Failed to wait for child process: {}", e);
             // If waiting fails, return an error. This would trigger terminal restore
@@ -422,13 +414,9 @@ fn main() -> io::Result<()> {
     drop(input_thread); // Let process::exit handle it
 
     // --- Exit ---
-    println!("xolmis finished.");
-    // Use immediate exit via std::process::exit.
-    // Letting `main` return naturally caused hangs because `input_thread.join()`
-    // would block indefinitely waiting on `stdin.read()` after the child shell had exited.
-    // Using `exit` terminates all threads abruptly, avoiding the hang.
-    // Known Issue: This prevents the `_term_restore` destructor from running,
-    // leaving the terminal in raw mode.
+    // Restore terminal settings before exit (drop runs the termios restore)
+    drop(_term_restore);
+
+    // Use process::exit to terminate input_thread which blocks on stdin.read()
     std::process::exit(status.code().unwrap_or(1));
-    // --- End Exit ---
 }
